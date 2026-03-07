@@ -37,7 +37,7 @@ logging.basicConfig(stream=sys.stderr,
 log = logging.getLogger('kubernetes-model-source')
 
 
-def nodeCollectData(pod, container, defaults, taglist, mappingList, boEmoticon):
+def nodeCollectData(pod, container, defaults, taglist, mappingList, boEmoticon, index):
     tags = []
     tags.extend(taglist.split(','))
 
@@ -103,7 +103,9 @@ def nodeCollectData(pod, container, defaults, taglist, mappingList, boEmoticon):
     }
 
     mappings = []
-    custom_attributes = {}
+
+    # Initialize custom attributes with ordinal position of this pod within its parent.
+    custom_attributes = {'index': index}
 
     # custom mapping attributes
     if mappingList:
@@ -257,22 +259,41 @@ def main():
 
     node_set = []
 
+    # Count child pods of a (possibly autoscaling) ReplicaSet or other parent.
+    parents = {}
+
     ret = collect_pods_from_api(namespace_filter, label_selector, field_selector)
 
-    for i in ret.items:
-        for container in i.spec.containers:
+    for pod in ret.items:
+        for container in pod.spec.containers:
             log.debug("%s\t%s\t%s\t%s",
-                      i.status.pod_ip,
-                      i.metadata.namespace,
-                      i.metadata.name,
+                      pod.status.pod_ip,
+                      pod.metadata.namespace,
+                      pod.metadata.name,
                       container.name)
 
-            node_data = nodeCollectData(i,
+            # For scalable pods in a deployment, the ReplicaSet of a pod is the pod name with the last dash-separated
+            # token stripped off. If we have seen the ReplicaSet already, increment the counter. Otherwise, initialize
+            # this as the first pod in the ReplicaSet. Containers are indexed independently so that each container name
+            # gets its own sequence within the parent.
+            #
+            # For example, the deployment "my-deployment" might create a ReplicaSet named "my-deployment-5ffd8f676d"
+            # and one of the pods within the ReplicaSet might be identified as "my-deployment-5ffd8f676d-c6wbf". By
+            # removing the suffix that identifies the pod, we index containers within the parent group. In this way, we
+            # can ensure that only one pod per ReplicaSet runs a command by filtering the nodes in Rundeck to include
+            # only those where index is equal to 1.
+            parts = pod.metadata.name.rsplit('-', 1)
+            parent_name = parts[0] if len(parts) > 1 else pod.metadata.name
+            parents_index = f"{pod.metadata.namespace}/{parent_name}/{container.name}"
+            parents[parents_index] = parents.get(parents_index, 0) + 1
+
+            node_data = nodeCollectData(pod,
                                         container,
                                         defaults,
                                         tags,
                                         mappingList,
-                                        boEmoticon
+                                        boEmoticon,
+                                        parents[parents_index]
                                         )
 
             if running is False:
