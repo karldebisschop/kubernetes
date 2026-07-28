@@ -7,6 +7,7 @@ import json
 import shlex
 
 from kubernetes import client
+from kubernetes.client.rest import ApiException
 
 
 logging.basicConfig(stream=sys.stderr,
@@ -208,7 +209,13 @@ def main():
 
     node_set = []
 
-    ret = collect_pods_from_api(namespace_filter, label_selector, field_selector)
+    try:
+        ret = collect_pods_from_api(namespace_filter, label_selector, field_selector)
+    except ApiException as e:
+        log.error("Kubernetes API error (HTTP %s): %s", e.status, e.reason)
+        if e.body:
+            log.error("Response body: %s", e.body)
+        sys.exit(1)
 
     for i in ret.items:
         for container in i.spec.containers:

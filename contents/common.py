@@ -3,7 +3,7 @@ import logging
 import sys
 import os
 import tarfile
-from tempfile import TemporaryFile
+import tempfile
 
 import yaml
 import datetime
@@ -89,7 +89,11 @@ def connect():
 
     if config_file:
         log.debug("getting settings from file %s", config_file)
-        config.load_kube_config(config_file=config_file)
+        try:
+            config.load_kube_config(config_file=config_file)
+        except Exception as e:
+            log.error("Failed to load kube config from %s: %s", config_file, e)
+            raise
     else:
         if url and token:
             log.debug("getting settings from plugin configuration")
@@ -125,10 +129,23 @@ def connect():
             if ssl_ca_cert:
                 kubeconfig_dict['clusters'][0]['cluster']['certificate-authority'] = ssl_ca_cert
 
-            config.load_kube_config(config_dict=kubeconfig_dict)
+            kubeconfig_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
+            yaml.dump(kubeconfig_dict, kubeconfig_tmp)
+            kubeconfig_tmp.close()
+            try:
+                config.load_kube_config(config_file=kubeconfig_tmp.name)
+            except Exception as e:
+                log.error("Failed to configure Kubernetes client with URL=%s: %s", url, e)
+                raise
+            finally:
+                os.unlink(kubeconfig_tmp.name)
         else:
             log.debug("Either URL or Token is not defined. Fall back to getting settings from default config file [$home/.kube/config]")
-            config.load_kube_config()
+            try:
+                config.load_kube_config()
+            except Exception as e:
+                log.error("Failed to load default kube config: %s", e)
+                raise
 
 
 def load_liveness_readiness_probe(data):
@@ -511,7 +528,7 @@ def copy_file(name, namespace, container, source_file, destination_path, destina
                   stdout=False, tty=False,
                   _preload_content=False)
 
-    with TemporaryFile() as tar_buffer:
+    with tempfile.TemporaryFile() as tar_buffer:
         with tarfile.open(fileobj=tar_buffer, mode='w') as tar:
             tar.add(name=source_file, arcname=destination_path + "/" + destination_file_name)
 

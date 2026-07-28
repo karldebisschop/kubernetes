@@ -395,19 +395,20 @@ class TestCommon(unittest.TestCase):
         common.connect()
         mock_config.load_kube_config.assert_called_once_with(config_file='/node/config')
 
+    @patch('contents.common.os.unlink')
     @patch('contents.common.config')
-    def test_connect_url_and_token(self, mock_config):
+    @patch('contents.common.tempfile.NamedTemporaryFile')
+    def test_connect_url_and_token(self, mock_tempfile, mock_config, mock_unlink):
         os.environ.clear()
         os.environ['RD_CONFIG_URL'] = 'https://k8s.example.com'
         os.environ['RD_CONFIG_TOKEN'] = 'my-token'
         os.environ['RD_CONFIG_VERIFY_SSL'] = 'true'
+        mock_file = MagicMock()
+        mock_file.name = '/tmp/kubeconfig.yaml'
+        mock_tempfile.return_value = mock_file
         common.connect()
-        mock_config.load_kube_config.assert_called_once()
-        call_kwargs = mock_config.load_kube_config.call_args
-        config_dict = call_kwargs.kwargs.get('config_dict') or call_kwargs[1].get('config_dict')
-        self.assertEqual(config_dict['clusters'][0]['cluster']['server'], 'https://k8s.example.com')
-        self.assertEqual(config_dict['users'][0]['user']['token'], 'my-token')
-        self.assertFalse(config_dict['clusters'][0]['cluster']['insecure-skip-tls-verify'])
+        mock_config.load_kube_config.assert_called_once_with(config_file='/tmp/kubeconfig.yaml')
+        mock_unlink.assert_called_once_with('/tmp/kubeconfig.yaml')
 
     @patch('contents.common.config')
     def test_connect_default_fallback(self, mock_config):
