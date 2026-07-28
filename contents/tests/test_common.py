@@ -395,15 +395,19 @@ class TestCommon(unittest.TestCase):
         common.connect()
         mock_config.load_kube_config.assert_called_once_with(config_file='/node/config')
 
-    @patch('contents.common.client.Configuration.set_default')
     @patch('contents.common.config')
-    def test_connect_url_and_token(self, mock_config, mock_set_default):
+    def test_connect_url_and_token(self, mock_config):
         os.environ.clear()
         os.environ['RD_CONFIG_URL'] = 'https://k8s.example.com'
         os.environ['RD_CONFIG_TOKEN'] = 'my-token'
         os.environ['RD_CONFIG_VERIFY_SSL'] = 'true'
         common.connect()
-        mock_set_default.assert_called_once()
+        mock_config.load_kube_config.assert_called_once()
+        call_kwargs = mock_config.load_kube_config.call_args
+        config_dict = call_kwargs.kwargs.get('config_dict') or call_kwargs[1].get('config_dict')
+        self.assertEqual(config_dict['clusters'][0]['cluster']['server'], 'https://k8s.example.com')
+        self.assertEqual(config_dict['users'][0]['user']['token'], 'my-token')
+        self.assertFalse(config_dict['clusters'][0]['cluster']['insecure-skip-tls-verify'])
 
     @patch('contents.common.config')
     def test_connect_default_fallback(self, mock_config):

@@ -9,7 +9,7 @@ import yaml
 import datetime
 
 from kubernetes import client, config
-from kubernetes.client import Configuration
+
 from kubernetes.stream import stream
 from kubernetes.client.api import core_v1_api
 from kubernetes.client.rest import ApiException
@@ -94,22 +94,38 @@ def connect():
         if url and token:
             log.debug("getting settings from plugin configuration")
 
-            configuration = Configuration()
-            configuration.host = url
+            kubeconfig_dict = {
+                'clusters': [{
+                    'cluster': {
+                        'server': url,
+                    },
+                    'name': 'rundeck-cluster',
+                }],
+                'contexts': [{
+                    'context': {
+                        'cluster': 'rundeck-cluster',
+                        'user': 'rundeck-user',
+                    },
+                    'name': 'rundeck-context',
+                }],
+                'current-context': 'rundeck-context',
+                'users': [{
+                    'user': {
+                        'token': token,
+                    },
+                    'name': 'rundeck-user',
+                }],
+            }
 
             if verify_ssl == 'true':
-                configuration.verify_ssl = verify_ssl
+                kubeconfig_dict['clusters'][0]['cluster']['insecure-skip-tls-verify'] = False
             else:
-                configuration.verify_ssl = None
-                configuration.assert_hostname = False
+                kubeconfig_dict['clusters'][0]['cluster']['insecure-skip-tls-verify'] = True
 
             if ssl_ca_cert:
-                configuration.ssl_ca_cert = ssl_ca_cert
+                kubeconfig_dict['clusters'][0]['cluster']['certificate-authority'] = ssl_ca_cert
 
-            configuration.api_key['authorization'] = token
-            configuration.api_key_prefix['authorization'] = 'Bearer'
-
-            client.Configuration.set_default(configuration)
+            config.load_kube_config(config_dict=kubeconfig_dict)
         else:
             log.debug("Either URL or Token is not defined. Fall back to getting settings from default config file [$home/.kube/config]")
             config.load_kube_config()
