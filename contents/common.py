@@ -129,16 +129,11 @@ def connect():
             if ssl_ca_cert:
                 kubeconfig_dict['clusters'][0]['cluster']['certificate-authority'] = ssl_ca_cert
 
-            kubeconfig_tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
-            yaml.dump(kubeconfig_dict, kubeconfig_tmp)
-            kubeconfig_tmp.close()
             try:
-                config.load_kube_config(config_file=kubeconfig_tmp.name)
+                config.load_kube_config_from_dict(kubeconfig_dict, persist_config=False)
             except Exception as e:
                 log.error("Failed to configure Kubernetes client with URL=%s: %s", url, e)
                 raise
-            finally:
-                os.unlink(kubeconfig_tmp.name)
         else:
             log.debug("Either URL or Token is not defined. Fall back to getting settings from default config file [$home/.kube/config]")
             try:
