@@ -197,6 +197,29 @@ This plugin allows copying files from Rundeck to a pod, including script, text, 
 
 The following steps plugins allow you to deploy/un-deploy applications and run/re-run jobs on kubernetes. For example, you can create deployment, services, ingress, etc and update or delete those kubernetes resources.
 
+### Resource Requests and Limits
+
+The Create Deployment, Create Job, and Create Pod steps accept **Resource Requests** and **Resource Limits**
+fields to control the container's compute resources. Both use the same comma-separated `key=value` format:
+
+```
+cpu=1,memory=512Mi
+```
+
+* **Resource Requests**: the minimum resources guaranteed to the container. Kubernetes uses this to decide
+  which node to schedule the pod on.
+* **Resource Limits**: the maximum resources the container is allowed to use. Kubernetes throttles CPU usage
+  above the limit, and terminates the container if it exceeds the memory limit.
+
+Example using both together:
+
+```
+Resource Requests: cpu=250m,memory=256Mi
+Resource Limits:   cpu=1,memory=512Mi
+```
+
+See the [Kubernetes documentation on resource requests and limits](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) for more detail on units and behavior.
+
 ### Create / Update / Delete / Check / Wait a Deployment
 These steps manage deployment resources, you can create, update or delete a deployment and check its status.
 
