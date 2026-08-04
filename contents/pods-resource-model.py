@@ -23,8 +23,12 @@ def format_started_at(started):
     # "YYYY-MM-DD HH:MM:SS" shape this attribute has always produced.
     if not started:
         return None
-    parsed = datetime.datetime.fromisoformat(started.replace('Z', '+00:00'))
-    return parsed.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        parsed = datetime.datetime.fromisoformat(started.replace('Z', '+00:00'))
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        log.warning("Could not parse startedAt value %r, leaving it unset", started)
+        return None
 
 
 def nodeCollectData(pod, container, config):
@@ -251,7 +255,7 @@ def main():
     # Parse the per-node options once here rather than re-parsing the same config
     # strings inside nodeCollectData for every container.
     config = {
-        'tags': tags.split(','),
+        'tags': [t for t in tags.split(',') if t],
         'mappings': mappingList.split(',') if mappingList else [],
         'defaults': dict(token.split('=') for token in shlex.split(defaults or '')),
         'emoticon': boEmoticon,

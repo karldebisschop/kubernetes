@@ -94,6 +94,17 @@ class TestNodeCollectData(unittest.TestCase):
         data = nodeCollectData(pod, container, '', 'kubernetes', None, False)
         self.assertEqual('waiting', data['default:status'])
 
+    def test_running_pod_with_unparseable_started_at(self):
+        # A malformed/unexpected startedAt value should not blow up node
+        # collection for the whole pod; it should just leave started_at unset.
+        container = make_container()
+        cs = make_container_status(name='app', running=True, started_at='not-a-timestamp')
+        pod = make_pod(container_statuses=[cs])
+
+        data = nodeCollectData(pod, container, '', 'kubernetes', None, False)
+        self.assertEqual('running', data['default:status'])
+        self.assertIsNone(data['default:started_at'])
+
     def test_terminated_pod(self):
         container = make_container()
         cs = make_container_status(name='app', running=False, terminated=True)
@@ -443,6 +454,27 @@ class TestMain(unittest.TestCase):
         # No RD_CONFIG_EXCLUDE_NAMESPACES set -> field_selector stays None (no change).
         _, _, field_selector = mock_collect.call_args[0]
         self.assertIsNone(field_selector)
+
+    @patch.object(pods_resource_model, 'collect_pods_from_api')
+    @patch.object(pods_resource_model.common, 'connect')
+    def test_main_no_trailing_empty_tag_when_tags_unset(self, mock_connect, mock_collect):
+        # RD_CONFIG_TAGS intentionally left unset: tags.split(',') on the ''
+        # default would otherwise produce [''], showing up as a trailing
+        # empty tag ("pods,") in the output.
+        os.environ['RD_CONFIG_ATTRIBUTES'] = ''
+
+        container = make_container()
+        pod = make_pod(name='pod-a', container_statuses=None)
+
+        mock_collect.return_value = self._make_pod_list([(pod, [container])])
+
+        with patch('builtins.print') as mock_print:
+            main()
+
+        import json
+        output = mock_print.call_args[0][0]
+        nodes = json.loads(output)
+        self.assertEqual('pods', nodes[0]['tags'])
 
     @patch.object(pods_resource_model, 'collect_pods_from_api')
     @patch.object(pods_resource_model.common, 'connect')
