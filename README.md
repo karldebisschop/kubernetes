@@ -10,45 +10,123 @@ Use cases:
 
 ## Requirements
 
-These plugins require the python kubernetes SDK to be installed on the rundeck server.
-For example, you can install it using `pip install kubernetes`.
+### Python Version
 
-The Python Kubernetes API client requires version 11 of the library. You can confirm it with `python -m pip list | grep kubernetes`.
+This plugin requires **Python 3.10 or newer**. The plugin is tested on Python 3.10, 3.11, 3.12, 3.13, and 3.14.
 
-Further information here: [https://github.com/kubernetes-client/python](https://github.com/kubernetes-client/python).
+**Note:** Python 3.9 reached end-of-life in October 2025 and is no longer supported.
 
-### Authentication for Tectonic Environments.
-There is a pull request [work](https://github.com/kubernetes-client/python-base/pull/48) for the kubernetes python SDK to support authenticating with the kubernetes API using OIDC (which is used by tectonic).
+### Python Dependencies
 
-For now, you can install the kubernetes python SDK from this repo to have the OIDC support:
+This plugin requires the following Python packages to be installed **on the server where Rundeck executes** (either your Rundeck server or your Runner nodes if using remote execution):
 
+- **kubernetes** >= 35.0.0 - The official Kubernetes Python client
+- **urllib3** >= 2.6.3 - HTTP client library
+- **pyyaml** - YAML parser and emitter
+- **packaging** >= 20.0 - Version comparison utilities
+
+**Installation location:**
+- **Rundeck server**: If running jobs locally on the Rundeck server
+- **Runner nodes**: If using Rundeck Enterprise with remote execution
+- **Both**: If you have a mixed environment
+
+You can install all dependencies using:
+
+```bash
+pip install .
 ```
-git clone --recursive https://github.com/ltamaster/python
-cd python
-python setup.py install
 
+Or install individual packages directly:
+
+```bash
+pip install 'kubernetes>=35.0.0'
 ```
+
+**Version 35.0.0+ is required** to address security vulnerabilities in transitive dependencies. This version removes the dependency on `google-auth`, which had a vulnerable `pyasn1` dependency (CVE-2026-23490).
+
+You can verify your installation with:
+
+```bash
+python -m pip list | grep kubernetes
+```
+
+Further information: [https://github.com/kubernetes-client/python](https://github.com/kubernetes-client/python)
+
+### Kubernetes Cluster Compatibility
+
+This plugin requires the Kubernetes Python client library version **35.0.0 or newer**.
+
+The Kubernetes Python client is generally **backwards compatible** with older Kubernetes clusters. For the most accurate and up-to-date information about which Kubernetes API/server versions are supported by a given client version, refer to the upstream compatibility documentation:
+
+- [Kubernetes Python Client Compatibility](https://github.com/kubernetes-client/python#compatibility)
+
+In practice, upgrading the client library typically does not require upgrading your Kubernetes cluster, but you should verify compatibility against the upstream documentation and test in a non-production environment before making changes.
+
+### Upgrading from Previous Plugin Versions
+
+If you're upgrading from a previous version of this plugin (v2.0.16 or earlier), you **must** upgrade your Python dependencies to avoid security vulnerabilities.
+
+**Run this command on each server where Rundeck executes jobs:**
+
+```bash
+pip install --upgrade 'kubernetes>=35.0.0'
+# or if pip3 is your command:
+pip3 install --upgrade 'kubernetes>=35.0.0'
+```
+
+**Where to run this command:**
+- **Rundeck server**: If jobs run locally on your Rundeck server
+- **Each Runner node**: If using Rundeck Enterprise with remote execution
+- **Both**: If you have a mixed environment
+
+**Why the upgrade is required:**
+- Previous versions allowed any kubernetes client version, including older versions with security vulnerabilities
+- Version 35.0.0+ eliminates CVE-2026-23490 (High severity DoS vulnerability) by removing the vulnerable dependency chain
+- The upgrade is backwards compatible with your existing Kubernetes clusters
+
+**What won't break:**
+- Your existing Kubernetes cluster version (no cluster upgrade required)
+- Your existing plugin configurations
+- Your existing Rundeck jobs and workflows
+- Communication with older Kubernetes API versions (v1.25, v1.28, v1.30, etc.)
+
+**What happens if you don't upgrade:**
+- Jobs will continue to work (no immediate breakage)
+- A security warning will appear in job logs on every execution
+- Your installation remains vulnerable to CVE-2026-23490
+
+**What changes:**
+- The Python kubernetes client library must be upgraded on all execution nodes
+- Any custom scripts or automation that install dependencies will need to use the new version
 
 ## Build and Install
 
 Run `gradle build` to build the zip file. Then, copy the zip file to the `$RDECK_BASE\libext` folder.
 
+## Development Setup
+
+Install the project with development dependencies:
+
+```sh
+pip install -e '.[dev]'
+```
+
+This installs the project in editable mode along with testing tools (pytest).
+
 ## Testing
 
-To run the tests specified in the `tox.ini` file, follow these steps:
+You can run tests directly with pytest:
 
-- Install Tox: Ensure you have Tox installed. You can install it using pip:
-   ```sh
-   pip install tox
-   ```
-- Run Tox: Execute Tox in the directory containing the `tox.ini` file. This will run the tests in all specified environments:
-   ```sh
-   tox
-   ```
-- Run Specific Environment: If you want to run tests for a specific environment (e.g., Python 3.8), you can specify the environment:
-   ```sh
-   tox -e py38
-   ```
+```sh
+pytest
+```
+
+Or use Tox, which manages its own virtual environment:
+
+```sh
+pip install tox
+tox
+```
 
 ## Authentication
 
@@ -67,7 +145,7 @@ Otherwise, you can set the following parameters:
 This plugin allows getting the container pods from kubernetes as rundeck nodes.
 
 * **Default attributes**: List of key=value pairs, example: username=root
-* **Custom Mapping**: Custom mapping adding on the rundeck nodes, for example: ```nodename.selector=default:Name,hostname.selector=default:pod_id```
+* **Custom Mapping**: Custom mapping adding on the rundeck nodes, for example: ```nodename.selector=default:name,hostname.selector=default:pod_id```
 
 * **Tags**: List of tags. You can add static and custom tags, for example:
 ```tag.selector=default:image, tag.selector=default:status, kubernetes```
@@ -107,8 +185,7 @@ This plugin allows run commands/scripts to a container pod from rundeck.
 
 
 ## File Copier
-This plugin allows copy files from rundeck to a pod.
-For now just script and text files can be copied to a remote pod.
+This plugin allows copying files from Rundeck to a pod, including script, text, and binary files.
 
 **Configurations:**
 
