@@ -213,6 +213,21 @@ These steps manage services resources, you can create or delete a Job.
 
 Also, you can re-run jobs that are already created. Kubernetes doesn't allow re-run jobs, so what this step does is get the job definition, delete it, and creating it again.
 
+The **EnvFrom** field on the Create Job step accepts `configMapRef`/`secretRef` entries with an
+optional `optional` flag. When `optional: true`, the job will still start even if the referenced
+ConfigMap or Secret doesn't exist; when omitted or `false` (the default), the job fails if it's
+missing:
+
+```yaml
+envFrom:
+  - configMapRef:
+      name: my-config
+      optional: true  # Job starts even if my-config doesn't exist
+  - secretRef:
+      name: my-secret
+      optional: false  # Job fails if my-secret doesn't exist (default)
+```
+
 ### Generic Steps
 
 These steps provide a generic way to create/delete resources on kubernetes using a yaml script. The resources that this plugin allows creating are:
