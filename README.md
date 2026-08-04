@@ -10,6 +10,12 @@ Use cases:
 
 ## Requirements
 
+### Python Version
+
+This plugin requires **Python 3.10 or newer**. The plugin is tested on Python 3.10, 3.11, 3.12, 3.13, and 3.14.
+
+**Note:** Python 3.9 reached end-of-life in October 2025 and is no longer supported.
+
 ### Python Dependencies
 
 This plugin requires the following Python packages to be installed **on the server where Rundeck executes** (either your Rundeck server or your Runner nodes if using remote execution):
@@ -27,15 +33,13 @@ This plugin requires the following Python packages to be installed **on the serv
 You can install all dependencies using:
 
 ```bash
-pip install -r requirements.txt
+pip install .
 ```
 
-Or install the kubernetes client directly:
+Or install individual packages directly:
 
 ```bash
 pip install 'kubernetes>=35.0.0'
-# or if pip3 is your command:
-pip3 install 'kubernetes>=35.0.0'
 ```
 
 **Version 35.0.0+ is required** to address security vulnerabilities in transitive dependencies. This version removes the dependency on `google-auth`, which had a vulnerable `pyasn1` dependency (CVE-2026-23490).
@@ -47,11 +51,6 @@ python -m pip list | grep kubernetes
 ```
 
 Further information: [https://github.com/kubernetes-client/python](https://github.com/kubernetes-client/python)
-
-### Python Version Support
-
-- **Python 3.9+** is required (urllib3 2.6.x requires Python 3.9+)
-- **Python 3.10+** is recommended for best performance and security
 
 ### Kubernetes Cluster Compatibility
 
@@ -104,25 +103,30 @@ pip3 install --upgrade 'kubernetes>=35.0.0'
 
 Run `gradle build` to build the zip file. Then, copy the zip file to the `$RDECK_BASE\libext` folder.
 
+## Development Setup
+
+Install the project with development dependencies:
+
+```sh
+pip install -e '.[dev]'
+```
+
+This installs the project in editable mode along with testing tools (pytest).
+
 ## Testing
 
-To run the tests specified in the `tox.ini` file, follow these steps:
+You can run tests directly with pytest:
 
-- Install Tox: Ensure you have Tox installed. You can install it using pip:
-   ```sh
-   pip install tox
-   ```
-- Run Tox: Execute Tox in the directory containing the `tox.ini` file. This will run the tests in all specified environments (Python 3.9, 3.10, 3.11, 3.12):
-   ```sh
-   tox
-   ```
-- Run Specific Environment: If you want to run tests for a specific Python version, you can specify the environment:
-   ```sh
-   tox -e py39   # For Python 3.9
-   tox -e py310  # For Python 3.10
-   tox -e py311  # For Python 3.11
-   tox -e py312  # For Python 3.12
-   ```
+```sh
+pytest
+```
+
+Or use Tox, which manages its own virtual environment:
+
+```sh
+pip install tox
+tox
+```
 
 ## Authentication
 
@@ -181,8 +185,7 @@ This plugin allows run commands/scripts to a container pod from rundeck.
 
 
 ## File Copier
-This plugin allows copy files from rundeck to a pod.
-For now just script and text files can be copied to a remote pod.
+This plugin allows copying files from Rundeck to a pod, including script, text, and binary files.
 
 **Configurations:**
 
@@ -193,6 +196,29 @@ For now just script and text files can be copied to a remote pod.
 ## Workflow Steps
 
 The following steps plugins allow you to deploy/un-deploy applications and run/re-run jobs on kubernetes. For example, you can create deployment, services, ingress, etc and update or delete those kubernetes resources.
+
+### Resource Requests and Limits
+
+The Create Deployment, Create Job, and Create Pod steps accept **Resource Requests** and **Resource Limits**
+fields to control the container's compute resources. Both use the same comma-separated `key=value` format:
+
+```
+cpu=1,memory=512Mi
+```
+
+* **Resource Requests**: the minimum resources guaranteed to the container. Kubernetes uses this to decide
+  which node to schedule the pod on.
+* **Resource Limits**: the maximum resources the container is allowed to use. Kubernetes throttles CPU usage
+  above the limit, and terminates the container if it exceeds the memory limit.
+
+Example using both together:
+
+```
+Resource Requests: cpu=250m,memory=256Mi
+Resource Limits:   cpu=1,memory=512Mi
+```
+
+See the [Kubernetes documentation on resource requests and limits](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) for more detail on units and behavior.
 
 ### Create / Update / Delete / Check / Wait a Deployment
 These steps manage deployment resources, you can create, update or delete a deployment and check its status.
@@ -209,6 +235,21 @@ These steps manage services resources, you can create, update or delete a servic
 These steps manage services resources, you can create or delete a Job.
 
 Also, you can re-run jobs that are already created. Kubernetes doesn't allow re-run jobs, so what this step does is get the job definition, delete it, and creating it again.
+
+The **EnvFrom** field on the Create Job step accepts `configMapRef`/`secretRef` entries with an
+optional `optional` flag. When `optional: true`, the job will still start even if the referenced
+ConfigMap or Secret doesn't exist; when omitted or `false` (the default), the job fails if it's
+missing:
+
+```yaml
+envFrom:
+  - configMapRef:
+      name: my-config
+      optional: true  # Job starts even if my-config doesn't exist
+  - secretRef:
+      name: my-secret
+      optional: false  # Job fails if my-secret doesn't exist (default)
+```
 
 ### Generic Steps
 

@@ -14,15 +14,13 @@ from kubernetes.stream import stream
 from kubernetes.client.api import core_v1_api
 from kubernetes.client.rest import ApiException
 
-import requests
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+import urllib3
+from urllib3.exceptions import InsecureRequestWarning
+urllib3.disable_warnings(InsecureRequestWarning)
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO,
                     format='%(levelname)s: %(name)s: %(message)s')
 log = logging.getLogger('kubernetes-plugin')
-
-PY = sys.version_info[0]
 
 if os.environ.get('RD_JOB_LOGLEVEL') == 'DEBUG':
     log.setLevel(logging.DEBUG)
@@ -433,6 +431,16 @@ def create_pod_template_spec(data):
             requests=tmp_resources
         )
 
+    if "resources_limits" in data:
+        resources_array = data["resources_limits"].split(",")
+        tmp_limits = dict(s.split('=', 1) for s in resources_array)
+        if container.resources is not None:
+            container.resources.limits = tmp_limits
+        else:
+            container.resources = client.V1ResourceRequirements(
+                limits=tmp_limits
+            )
+
     template_spec = client.V1PodSpec(
         containers=[container]
     )
@@ -502,8 +510,7 @@ def copy_file(name, namespace, container, source_file, destination_path, destina
             tar.add(name=source_file, arcname=destination_path + "/" + destination_file_name)
 
         tar_buffer.seek(0)
-        commands = []
-        commands.append(tar_buffer.read())
+        sent = False
 
         while resp.is_open():
             resp.update(timeout=1)
@@ -513,13 +520,12 @@ def copy_file(name, namespace, container, source_file, destination_path, destina
                     log.info("%s", resp.read_stdout())
             if resp.peek_stderr():
                 log.error("ERROR: %s", resp.read_stderr())
-            if commands:
-                c = commands.pop(0)
-
-                # Python 3 expects bytes string to transfer the data.
-                if PY == 3:
-                    c = c.decode()
-                resp.write_stdin(c)
+            if not sent:
+                chunk = tar_buffer.read(4096)
+                while chunk:
+                    resp.write_stdin(chunk)
+                    chunk = tar_buffer.read(4096)
+                sent = True
             else:
                 break
         resp.close()
