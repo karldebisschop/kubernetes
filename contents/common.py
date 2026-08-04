@@ -3,13 +3,13 @@ import logging
 import sys
 import os
 import tarfile
-from tempfile import TemporaryFile
+import tempfile
 
 import yaml
 import datetime
 
 from kubernetes import client, config
-from kubernetes.client import Configuration
+
 from kubernetes.stream import stream
 from kubernetes.client.api import core_v1_api
 from kubernetes.client.rest import ApiException
@@ -89,30 +89,58 @@ def connect():
 
     if config_file:
         log.debug("getting settings from file %s", config_file)
-        config.load_kube_config(config_file=config_file)
+        try:
+            config.load_kube_config(config_file=config_file)
+        except Exception as e:
+            log.error("Failed to load kube config from %s: %s", config_file, e)
+            raise
     else:
         if url and token:
             log.debug("getting settings from plugin configuration")
 
-            configuration = Configuration()
-            configuration.host = url
+            kubeconfig_dict = {
+                'clusters': [{
+                    'cluster': {
+                        'server': url,
+                    },
+                    'name': 'rundeck-cluster',
+                }],
+                'contexts': [{
+                    'context': {
+                        'cluster': 'rundeck-cluster',
+                        'user': 'rundeck-user',
+                    },
+                    'name': 'rundeck-context',
+                }],
+                'current-context': 'rundeck-context',
+                'users': [{
+                    'user': {
+                        'token': token,
+                    },
+                    'name': 'rundeck-user',
+                }],
+            }
 
             if verify_ssl == 'true':
-                configuration.verify_ssl = verify_ssl
+                kubeconfig_dict['clusters'][0]['cluster']['insecure-skip-tls-verify'] = False
             else:
-                configuration.verify_ssl = None
-                configuration.assert_hostname = False
+                kubeconfig_dict['clusters'][0]['cluster']['insecure-skip-tls-verify'] = True
 
             if ssl_ca_cert:
-                configuration.ssl_ca_cert = ssl_ca_cert
+                kubeconfig_dict['clusters'][0]['cluster']['certificate-authority'] = ssl_ca_cert
 
-            configuration.api_key['authorization'] = token
-            configuration.api_key_prefix['authorization'] = 'Bearer'
-
-            client.Configuration.set_default(configuration)
+            try:
+                config.load_kube_config_from_dict(kubeconfig_dict, persist_config=False)
+            except Exception as e:
+                log.error("Failed to configure Kubernetes client with URL=%s: %s", url, e)
+                raise
         else:
             log.debug("Either URL or Token is not defined. Fall back to getting settings from default config file [$home/.kube/config]")
-            config.load_kube_config()
+            try:
+                config.load_kube_config()
+            except Exception as e:
+                log.error("Failed to load default kube config: %s", e)
+                raise
 
 
 def load_liveness_readiness_probe(data):
@@ -505,7 +533,7 @@ def copy_file(name, namespace, container, source_file, destination_path, destina
                   stdout=False, tty=False,
                   _preload_content=False)
 
-    with TemporaryFile() as tar_buffer:
+    with tempfile.TemporaryFile() as tar_buffer:
         with tarfile.open(fileobj=tar_buffer, mode='w') as tar:
             tar.add(name=source_file, arcname=destination_path + "/" + destination_file_name)
 

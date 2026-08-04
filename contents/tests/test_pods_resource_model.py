@@ -9,6 +9,8 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+from kubernetes.client.rest import ApiException
+
 
 # pods-resource-model.py has a hyphenated name, so use importlib
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -419,6 +421,26 @@ class TestMain(unittest.TestCase):
         import json
         output = mock_print.call_args[0][0]
         self.assertEqual([], json.loads(output))
+
+    @patch.object(pods_resource_model, 'collect_pods_from_api')
+    @patch.object(pods_resource_model.common, 'connect')
+    def test_main_logs_and_exits_on_api_exception(self, mock_connect, mock_collect):
+        os.environ['RD_CONFIG_TAGS'] = 'kubernetes'
+        os.environ['RD_CONFIG_ATTRIBUTES'] = ''
+
+        api_exception = ApiException(status=401, reason='Unauthorized')
+        api_exception.body = 'Invalid bearer token'
+        mock_collect.side_effect = api_exception
+
+        with self.assertRaises(SystemExit) as cm, \
+                self.assertLogs('kubernetes-model-source', level='ERROR') as log_ctx:
+            main()
+
+        self.assertEqual(cm.exception.code, 1)
+        joined_logs = '\n'.join(log_ctx.output)
+        self.assertIn('401', joined_logs)
+        self.assertIn('Unauthorized', joined_logs)
+        self.assertIn('Invalid bearer token', joined_logs)
 
 
 if __name__ == '__main__':
