@@ -81,6 +81,14 @@ def create_job_object(data):
             requests=tmp
         )
 
+    if "resources_limits" in data:
+        resources_array = data["resources_limits"].split(",")
+        tmp = dict(s.split('=', 1) for s in resources_array)
+        if container.resources is not None:
+            container.resources.limits = tmp
+        else:
+            container.resources = client.V1ResourceRequirements(limits=tmp)
+
     if "volume_mounts" in data:
         mounts = common.create_volume_mount_yaml(data)
         container.volume_mounts = mounts
@@ -92,18 +100,22 @@ def create_job_object(data):
         env_from = []
         for env_from_data in env_froms_data:
             if 'configMapRef' in env_from_data:
+                config_map_ref = env_from_data['configMapRef']
                 env_from.append(
                     client.V1EnvFromSource(
                         config_map_ref=client.V1ConfigMapEnvSource(
-                            env_from_data['configMapRef']['name']
+                            name=config_map_ref['name'],
+                            optional=config_map_ref.get('optional', False)
                         )
                     )
                 )
             elif 'secretRef' in env_from_data:
+                secret_ref = env_from_data['secretRef']
                 env_from.append(
                     client.V1EnvFromSource(
                         secret_ref=client.V1SecretEnvSource(
-                            env_from_data['secretRef']['name']
+                            name=secret_ref['name'],
+                            optional=secret_ref.get('optional', False)
                         )
                     )
                 )
@@ -241,6 +253,10 @@ def main():
     if os.environ.get('RD_CONFIG_RESOURCES_REQUESTS'):
         req = os.environ.get('RD_CONFIG_RESOURCES_REQUESTS')
         data["resources_requests"] = req
+    
+    if os.environ.get('RD_CONFIG_RESOURCES_LIMITS'):
+        lim = os.environ.get('RD_CONFIG_RESOURCES_LIMITS')
+        data["resources_limits"] = lim
 
     if os.environ.get('RD_CONFIG_VOLUME_MOUNTS'):
         data["volume_mounts"] = os.environ.get('RD_CONFIG_VOLUME_MOUNTS')

@@ -422,19 +422,26 @@ providers:
         required: false
         renderingOptions:
           groupName: Container
-      - name: volume_mounts
+      - name: resources_limits
         type: String
-        title: "Volume Mounts"
-        description: "Volume Mounts, yaml format "
+        title: "Resource Limits"
+        description: "Limit resources in format cpu=4,memory=1Gi"
+        required: false
+        renderingOptions:
+          groupName: Container
+      - name: volumes
+        type: String
+        title: "Volumes"
+        description: "Configure Volumes YAML format( https://kubernetes.io/docs/concepts/storage/persistent-volumes/). So far persistentVolumeClaim, hostPath, nfs, secret and configMap allowed"
         required: false
         renderingOptions:
           groupName: Container
           displayType: MULTI_LINE
           codeSyntaxMode: yaml
-      - name: volumes
+      - name: volume_mounts
         type: String
-        title: "Volumes"
-        description: "Configure Volumes YAML format( https://kubernetes.io/docs/concepts/storage/persistent-volumes/). So far persistentVolumeClaim, hostPath, nfs, secret and configMap allowed"
+        title: "Volume Mounts"
+        description: "Volume Mounts, yaml format "
         required: false
         renderingOptions:
           groupName: Container
@@ -613,6 +620,13 @@ providers:
         type: String
         title: "Resource Requests"
         description: "Request resources in format cpu=4,memory=1Gi"
+        required: false
+        renderingOptions:
+          groupName: Container
+      - name: resources_limits
+        type: String
+        title: "Resource Limits"
+        description: "Limit resources in format cpu=4,memory=1Gi"
         required: false
         renderingOptions:
           groupName: Container
@@ -1804,6 +1818,13 @@ providers:
         required: false
         renderingOptions:
           groupName: Container
+      - name: resources_limits
+        type: String
+        title: "Resource Limits"
+        description: "Limit resources in format cpu=4,memory=1Gi"
+        required: false
+        renderingOptions:
+          groupName: Container
       - name: volumes
         type: String
         title: "Volumes"
@@ -2341,19 +2362,26 @@ providers:
         required: false
         renderingOptions:
           groupName: Container
-      - name: volume_mounts
+      - name: resources_limits
         type: String
-        title: "Volume Mounts"
-        description: "Volume Mounts, yaml format (https://kubernetes.io/docs/tasks/configure-pod-container/configure-volume-storage/#configure-a-volume-for-a-pod)"
+        title: "Resource Limits"
+        description: "Limit resources in format cpu=4,memory=1Gi"
+        required: false
+        renderingOptions:
+          groupName: Container
+      - name: volumes
+        type: String
+        title: "Volumes"
+        description: "Configure Volumes YAML format( https://kubernetes.io/docs/concepts/storage/persistent-volumes/). So far persistentVolumeClaim, hostPath, nfs, secret and configMap allowed"
         required: false
         renderingOptions:
           groupName: Container
           displayType: MULTI_LINE
           codeSyntaxMode: yaml
-      - name: volumes
+      - name: volume_mounts
         type: String
-        title: "Volumes"
-        description: "Configure Volumes YAML format( https://kubernetes.io/docs/concepts/storage/persistent-volumes/). So far persistentVolumeClaim, hostPath, nfs, secret and configMap allowed"
+        title: "Volume Mounts"
+        description: "Volume Mounts, yaml format (https://kubernetes.io/docs/tasks/configure-pod-container/configure-volume-storage/#configure-a-volume-for-a-pod)"
         required: false
         renderingOptions:
           groupName: Container
