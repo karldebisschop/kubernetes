@@ -6,11 +6,10 @@ import common
 
 from kubernetes import client
 from kubernetes.client.rest import ApiException
-from kubernetes import watch
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO,
                     format='%(message)s')
-log = logging.getLogger('kubernetes-model-source')
+log = logging.getLogger('kubernetes-read-logs')
 
 
 def main():
@@ -19,52 +18,49 @@ def main():
         log.debug("Log level configured for DEBUG")
 
     data = common.get_code_node_parameter_dictionary()
-    data["follow"] = os.environ.get('RD_CONFIG_FOLLOW')
+    follow = os.environ.get('RD_CONFIG_FOLLOW') == 'true'
+
+    if not data["name"]:
+        log.error("Pod name is not defined. Set RD_CONFIG_NAME or RD_NODE_DEFAULT_NAME.")
+        sys.exit(1)
+
+    tail_lines_raw = os.environ.get('RD_CONFIG_NUMBER_OF_LINES')
+    tail_lines = None
+    if tail_lines_raw:
+        try:
+            tail_lines = int(tail_lines_raw)
+        except ValueError:
+            log.error("RD_CONFIG_NUMBER_OF_LINES must be a number, got: %s", tail_lines_raw)
+            sys.exit(1)
 
     common.connect()
 
     try:
         v1 = client.CoreV1Api()
 
-        if data["follow"] == 'true':
+        kwargs = dict(
+            namespace=data["namespace"],
+            name=data["name"],
+        )
+        if tail_lines is not None:
+            kwargs['tail_lines'] = tail_lines
+        if data["container_name"]:
+            kwargs['container'] = data["container_name"]
 
-            if data["container_name"]:
-                w = watch.Watch()
-                for line in w.stream(v1.read_namespaced_pod_log,
-                                     namespace=data["namespace"],
-                                     name=data["name"],
-                                     tail_lines=os.environ.get('RD_CONFIG_NUMBER_OF_LINES'),
-                                     follow=False):
-                    print(line.encode('ascii', 'ignore'))
-            else:
-                w = watch.Watch()
-                for line in w.stream(v1.read_namespaced_pod_log,
-                                     container=data["container_name"],
-                                     namespace=data["namespace"],
-                                     name=data["name"],
-                                     tail_lines=os.environ.get('RD_CONFIG_NUMBER_OF_LINES'),
-                                     follow=False):
-                    print(line.encode('ascii', 'ignore'))
+        if follow:
+            from kubernetes import watch
+            w = watch.Watch()
+            for line in w.stream(v1.read_namespaced_pod_log, follow=True, **kwargs):
+                print(line)
         else:
-            if data["container_name"]:
-                ret = v1.read_namespaced_pod_log(
-                    container=data["container_name"],
-                    namespace=data["namespace"],
-                    name=data["name"],
-                    tail_lines=os.environ.get('RD_CONFIG_NUMBER_OF_LINES'),
-                    _preload_content=False
-                )
-            else:
-                ret = v1.read_namespaced_pod_log(
-                    namespace=data["namespace"],
-                    name=data["name"],
-                    tail_lines=os.environ.get('RD_CONFIG_NUMBER_OF_LINES'),
-                    _preload_content=False
-                )
-            print(ret.read())
+            ret = v1.read_namespaced_pod_log(_preload_content=False, **kwargs)
+            # errors='replace' so non-UTF-8 container output still reaches the
+            # operator; a UnicodeDecodeError here is not an ApiException and
+            # would escape as an unhandled traceback with no logs shown.
+            print(ret.read().decode('utf-8', errors='replace'))
 
     except ApiException:
-        log.exception("Exception error creating:")
+        log.exception("Exception reading pod logs:")
         sys.exit(1)
 
 
