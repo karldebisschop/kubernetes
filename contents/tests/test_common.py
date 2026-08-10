@@ -459,8 +459,10 @@ class TestCommon(unittest.TestCase):
         from kubernetes.client.rest import ApiException
         mock_api = mock_api_class.return_value
         mock_api.delete_namespaced_pod.side_effect = ApiException(status=500)
-        result = common.delete_pod({'name': 'my-pod', 'namespace': 'default'})
-        self.assertIsNone(result)
+        # Only a missing pod returns None. Swallowing other errors the same way
+        # left callers unable to tell a failed delete from an absent pod.
+        with self.assertRaises(ApiException):
+            common.delete_pod({'name': 'my-pod', 'namespace': 'default'})
 
 
     def _run_copy_file_test(self, content, suffix, dest_path, dest_name, expected_arcname):

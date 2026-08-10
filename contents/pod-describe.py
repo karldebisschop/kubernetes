@@ -10,16 +10,20 @@ from kubernetes.client.rest import ApiException
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO,
                     format='%(levelname)s: %(name)s: %(message)s')
-log = logging.getLogger('kubernetes-model-source')
+log = logging.getLogger('kubernetes-pod-describe')
 
 
 def main():
 
-    pod_name = os.environ.get('RD_CONFIG_NAME')
-    namespace = os.environ.get('RD_CONFIG_NAMESPACE')
+    # get_core_node_parameter_list already prefers the step's own setting over
+    # the node's, for both name and namespace, and falls back to the "default"
+    # namespace last. Resolving name here but not namespace would lose the
+    # node's namespace whenever the step named a pod without one.
+    pod_name, namespace, _ = common.get_core_node_parameter_list()
 
     if not pod_name:
-        [pod_name, namespace, container] = common.get_core_node_parameter_list()
+        log.error("Pod name is not defined. Set RD_CONFIG_NAME or RD_NODE_DEFAULT_NAME.")
+        sys.exit(1)
 
     common.connect()
 
@@ -33,7 +37,7 @@ def main():
         print(common.parseJson(api_response.status))
 
     except ApiException:
-        log.exception("Exception deleting deployment:")
+        log.exception("Exception describing pod %s:", pod_name)
         sys.exit(1)
 
 

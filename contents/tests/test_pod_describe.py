@@ -61,6 +61,30 @@ class TestPodDescribe(unittest.TestCase):
 
     @patch.object(pod_describe.client, 'CoreV1Api')
     @patch.object(pod_describe.common, 'connect')
+    def test_main_uses_node_namespace_when_step_sets_only_the_name(
+            self, mock_connect, mock_api_class):
+        # A node in namespace "prod" with the step's Pod Name filled in but
+        # Namespace blank must still describe prod/my-pod, not default/my-pod.
+        os.environ['RD_CONFIG_NAME'] = 'my-pod'
+        os.environ['RD_NODE_DEFAULT_NAMESPACE'] = 'prod'
+        mock_api_class.return_value.read_namespaced_pod.return_value = MagicMock(
+            status={'phase': 'Running'})
+
+        with redirect_stdout(io.StringIO()):
+            pod_describe.main()
+
+        mock_api_class.return_value.read_namespaced_pod.assert_called_once_with(
+            name='my-pod', namespace='prod')
+
+    @patch.object(pod_describe.client, 'CoreV1Api')
+    @patch.object(pod_describe.common, 'connect')
+    def test_main_exits_when_pod_name_is_missing(self, mock_connect, mock_api_class):
+        with self.assertRaises(SystemExit) as cm:
+            pod_describe.main()
+        self.assertEqual(1, cm.exception.code)
+
+    @patch.object(pod_describe.client, 'CoreV1Api')
+    @patch.object(pod_describe.common, 'connect')
     def test_main_exits_on_api_exception(self, mock_connect, mock_api_class):
         os.environ['RD_CONFIG_NAME'] = 'my-pod'
         os.environ['RD_CONFIG_NAMESPACE'] = 'prod'

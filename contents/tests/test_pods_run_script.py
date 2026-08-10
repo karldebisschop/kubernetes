@@ -43,7 +43,7 @@ class TestPodsRunScript(unittest.TestCase):
     @patch.object(pods_run_script.common, 'run_command')
     @patch.object(pods_run_script.common, 'copy_file')
     @patch.object(pods_run_script.common, 'log_pod_parameters')
-    @patch.object(pods_run_script.core_v1_api, 'CoreV1Api')
+    @patch.object(pods_run_script.client, 'CoreV1Api')
     @patch.object(pods_run_script.common, 'verify_pod_exists')
     @patch.object(pods_run_script.common, 'get_core_node_parameter_list')
     @patch.object(pods_run_script.common, 'connect')
@@ -62,7 +62,32 @@ class TestPodsRunScript(unittest.TestCase):
         self.assertEqual(['chmod', '+x'], chmod[:2])
         self.assertIn('ok', output)
 
-    @patch.object(pods_run_script.core_v1_api, 'CoreV1Api')
+    @patch.object(pods_run_script.common, 'verify_pod_exists')
+    @patch.object(pods_run_script.common, 'get_core_node_parameter_list')
+    @patch.object(pods_run_script.common, 'connect')
+    def test_main_exits_when_no_script_is_given(
+            self, mock_connect, mock_params, mock_verify):
+        # Upstream called .encode on the result of os.environ.get, so a missing
+        # script raised AttributeError on None rather than saying what was wrong.
+        mock_params.return_value = ['my-pod', 'default', 'app']
+
+        with self.assertRaises(SystemExit) as cm:
+            pods_run_script.main()
+        self.assertEqual(1, cm.exception.code)
+
+    @patch.object(pods_run_script.common, 'verify_pod_exists')
+    @patch.object(pods_run_script.common, 'get_core_node_parameter_list')
+    @patch.object(pods_run_script.common, 'connect')
+    def test_main_exits_when_pod_name_is_missing(
+            self, mock_connect, mock_params, mock_verify):
+        os.environ['RD_CONFIG_SCRIPT'] = 'echo hello'
+        mock_params.return_value = [None, 'default', 'app']
+
+        with self.assertRaises(SystemExit) as cm:
+            pods_run_script.main()
+        self.assertEqual(1, cm.exception.code)
+
+    @patch.object(pods_run_script.client, 'CoreV1Api')
     @patch.object(pods_run_script.common, 'verify_pod_exists')
     @patch.object(pods_run_script.common, 'get_core_node_parameter_list')
     @patch.object(pods_run_script.common, 'connect')
@@ -70,7 +95,7 @@ class TestPodsRunScript(unittest.TestCase):
             self, mock_connect, mock_params, mock_verify, mock_api_class):
         os.environ['RD_CONFIG_SCRIPT'] = 'echo hello'
         mock_params.return_value = ['my-pod', 'default', 'app']
-        mock_api_class.return_value.read_namespaced_pod.return_value = None
+        mock_verify.side_effect = SystemExit(1)
 
         with self.assertRaises(SystemExit) as cm:
             pods_run_script.main()
@@ -81,16 +106,14 @@ class TestPodsRunScript(unittest.TestCase):
     @patch.object(pods_run_script.common, 'copy_file')
     @patch.object(pods_run_script.common, 'log_pod_parameters')
     @patch.object(pods_run_script.client, 'CoreV1Api')
-    @patch.object(pods_run_script.core_v1_api, 'CoreV1Api')
     @patch.object(pods_run_script.common, 'verify_pod_exists')
     @patch.object(pods_run_script.common, 'get_core_node_parameter_list')
     @patch.object(pods_run_script.common, 'connect')
     def test_main_resolves_first_container_when_none_configured(
-            self, mock_connect, mock_params, mock_verify, mock_core_api,
-            mock_client_api, mock_log, mock_copy, mock_run_command, mock_interactive):
+            self, mock_connect, mock_params, mock_verify, mock_client_api,
+            mock_log, mock_copy, mock_run_command, mock_interactive):
         os.environ['RD_CONFIG_SCRIPT'] = 'echo hello'
         mock_params.return_value = ['my-pod', 'default', None]
-        mock_core_api.return_value.read_namespaced_pod.return_value = MagicMock()
         status = MagicMock()
         status.spec.containers = [MagicMock()]
         status.spec.containers[0].name = 'sidecar'
