@@ -1,0 +1,19 @@
+# Topic branches merged to build the integration branch, in order.
+# Drop a line once upstream accepts that work; it then arrives via upstream/main.
+# perf-skip-pod-list-deserialization was dropped this way when it merged as #201.
+#
+# Each branch stays whole rather than being split further: the upstream
+# maintainer's cost is per-pull-request, not per line reviewed, so fewer and
+# larger changesets move faster through their process.
+#
+# This branch is rebuilt onto newer upstream rather than accumulating commits, so
+# its tip is not a stable reference. Builds pin an immutable build/<n> tag
+# instead -- see the rundeck-k8s-plugin-build repository.
+#
+# Rebuild with:
+#   git fetch upstream && git fetch origin
+#   git checkout -B integration upstream/main
+#   grep -v '^#' INTEGRATION | while read -r b; do git merge --no-edit "$b" || break; done
+workload-indexing-and-node-naming
+step-script-fixes
+build-config
