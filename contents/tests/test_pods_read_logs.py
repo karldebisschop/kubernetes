@@ -64,6 +64,68 @@ class TestPodsReadLogs(unittest.TestCase):
     @patch.object(pods_read_logs.client, 'CoreV1Api')
     @patch.object(pods_read_logs.common, 'connect')
     @patch.object(pods_read_logs.common, 'get_code_node_parameter_dictionary')
+    def test_main_decodes_log_bytes_rather_than_printing_a_repr(
+            self, mock_params, mock_connect, mock_api_class):
+        mock_params.return_value = node_params()
+        mock_api_class.return_value.read_namespaced_pod_log.return_value.read.return_value = b'hello'
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            pods_read_logs.main()
+
+        self.assertIn('hello', out.getvalue())
+        self.assertNotIn("b'hello'", out.getvalue())
+
+    @patch('kubernetes.watch.Watch')
+    @patch.object(pods_read_logs.client, 'CoreV1Api')
+    @patch.object(pods_read_logs.common, 'connect')
+    @patch.object(pods_read_logs.common, 'get_code_node_parameter_dictionary')
+    def test_main_actually_follows_when_follow_is_requested(
+            self, mock_params, mock_connect, mock_api_class, mock_watch):
+        os.environ['RD_CONFIG_FOLLOW'] = 'true'
+        mock_params.return_value = node_params()
+        mock_watch.return_value.stream.return_value = ['line one']
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            pods_read_logs.main()
+
+        kwargs = mock_watch.return_value.stream.call_args[1]
+        self.assertTrue(kwargs['follow'])
+        self.assertEqual('app', kwargs['container'])
+        self.assertIn('line one', out.getvalue())
+
+    @patch.object(pods_read_logs.common, 'connect')
+    @patch.object(pods_read_logs.common, 'get_code_node_parameter_dictionary')
+    def test_main_exits_on_non_numeric_tail_lines(self, mock_params, mock_connect):
+        os.environ['RD_CONFIG_NUMBER_OF_LINES'] = 'lots'
+        mock_params.return_value = node_params()
+
+        with self.assertRaises(SystemExit) as cm:
+            pods_read_logs.main()
+        self.assertEqual(1, cm.exception.code)
+
+    @patch.object(pods_read_logs.client, 'CoreV1Api')
+    @patch.object(pods_read_logs.common, 'connect')
+    @patch.object(pods_read_logs.common, 'get_code_node_parameter_dictionary')
+    def test_main_survives_non_utf8_container_output(
+            self, mock_params, mock_connect, mock_api_class):
+        # A UnicodeDecodeError is not an ApiException, so it would escape the
+        # try as an unhandled traceback and show the operator no logs at all.
+        mock_params.return_value = node_params()
+        mock_api_class.return_value.read_namespaced_pod_log.return_value.read.return_value = (
+            b'before \xff\xfe after')
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            pods_read_logs.main()
+
+        self.assertIn('before', out.getvalue())
+        self.assertIn('after', out.getvalue())
+
+    @patch.object(pods_read_logs.client, 'CoreV1Api')
+    @patch.object(pods_read_logs.common, 'connect')
+    @patch.object(pods_read_logs.common, 'get_code_node_parameter_dictionary')
     def test_main_exits_on_api_exception(self, mock_params, mock_connect, mock_api_class):
         mock_params.return_value = node_params()
         mock_api_class.return_value.read_namespaced_pod_log.side_effect = ApiException(

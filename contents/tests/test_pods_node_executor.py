@@ -81,6 +81,33 @@ class TestPodsNodeExecutor(unittest.TestCase):
 
         self.assertEqual('sidecar', mock_run.call_args[0][2])
 
+    @patch.object(pods_node_executor.common, 'verify_pod_exists')
+    @patch.object(pods_node_executor.common, 'log_pod_parameters')
+    @patch.object(pods_node_executor.common, 'get_core_node_parameter_list')
+    @patch.object(pods_node_executor.common, 'connect')
+    def test_main_exits_when_no_command_is_given(
+            self, mock_connect, mock_params, mock_log, mock_verify):
+        # Upstream indexed os.environ directly, so a missing command raised
+        # KeyError instead of telling the operator what was wrong.
+        os.environ['RD_CONFIG_SHELL'] = '/bin/bash'
+        mock_params.return_value = ['my-pod', 'default', 'app']
+
+        with self.assertRaises(SystemExit) as cm:
+            pods_node_executor.main()
+        self.assertEqual(1, cm.exception.code)
+
+    @patch.object(pods_node_executor.common, 'verify_pod_exists')
+    @patch.object(pods_node_executor.common, 'get_core_node_parameter_list')
+    @patch.object(pods_node_executor.common, 'connect')
+    def test_main_exits_when_pod_name_is_missing(
+            self, mock_connect, mock_params, mock_verify):
+        os.environ['RD_CONFIG_COMMAND'] = 'echo hello'
+        mock_params.return_value = [None, 'default', 'app']
+
+        with self.assertRaises(SystemExit) as cm:
+            pods_node_executor.main()
+        self.assertEqual(1, cm.exception.code)
+
     @patch.object(pods_node_executor.common, 'run_interactive_command')
     @patch.object(pods_node_executor.common, 'verify_pod_exists')
     @patch.object(pods_node_executor.common, 'log_pod_parameters')

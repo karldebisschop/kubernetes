@@ -41,6 +41,23 @@ class TestCreatePod(unittest.TestCase):
     def setUp(self):
         os.environ.clear()
 
+    def test_create_pod_keeps_equals_signs_in_label_values(self):
+        # Splitting on every '=' raised "too many values to unpack" instead of
+        # saying what was wrong with the input.
+        pod = pods_create.create_pod(create_data(labels='token=a=b'))
+        self.assertEqual({'token': 'a=b'}, pod.metadata.labels)
+
+    def test_create_pod_reports_labels_that_are_not_pairs(self):
+        with self.assertRaises(SystemExit) as cm:
+            pods_create.create_pod(create_data(labels='notapair'))
+        self.assertEqual(1, cm.exception.code)
+
+    def test_create_pod_tolerates_empty_labels(self):
+        # labels is required in plugin.yaml, but an empty value satisfies that
+        # check and used to reach ''.split('=') as a bare ValueError.
+        pod = pods_create.create_pod(create_data(labels=''))
+        self.assertEqual({}, pod.metadata.labels)
+
     def test_create_pod_builds_metadata_from_labels(self):
         pod = pods_create.create_pod(create_data())
 
@@ -91,6 +108,21 @@ class TestPodsCreateMain(unittest.TestCase):
         with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
             pods_create.main()
         self.assertEqual(1, cm.exception.code)
+
+    @patch.object(pods_create.core_v1_api, 'CoreV1Api')
+    @patch.object(pods_create.common, 'log_pod_parameters')
+    @patch.object(pods_create.common, 'connect')
+    def test_main_does_not_report_success_when_nothing_was_created(
+            self, mock_connect, mock_log, mock_api_class):
+        self._configure()
+        mock_api_class.return_value.create_namespaced_pod.return_value = None
+
+        out = io.StringIO()
+        with redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            pods_create.main()
+
+        self.assertEqual(1, cm.exception.code)
+        self.assertNotIn('Pod Created successfully', out.getvalue())
 
     @patch.object(pods_create.core_v1_api, 'CoreV1Api')
     @patch.object(pods_create.common, 'log_pod_parameters')
