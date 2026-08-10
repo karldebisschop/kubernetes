@@ -57,8 +57,10 @@ class TestPodsDelete(unittest.TestCase):
         mock_delete.return_value = None
 
         out = io.StringIO()
-        pods_delete.main()
+        with redirect_stdout(out):
+            pods_delete.main()
 
+        self.assertIn('not found', out.getvalue())
         self.assertNotIn('Pod deleted successfully', out.getvalue())
 
     @patch.object(pods_delete.common, 'delete_pod')
