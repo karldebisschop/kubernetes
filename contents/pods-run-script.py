@@ -6,47 +6,32 @@ import tempfile
 
 import common
 
-from kubernetes.client.api import core_v1_api
-from kubernetes.client.rest import ApiException
 from kubernetes import client
+from kubernetes.client.rest import ApiException
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO,
                     format='%(levelname)s: %(name)s: %(message)s')
-log = logging.getLogger('kubernetes-model-source')
+log = logging.getLogger('kubernetes-run-script')
 
 if os.environ.get('RD_JOB_LOGLEVEL') == 'DEBUG':
     log.setLevel(logging.DEBUG)
 
-PY = sys.version_info[0]
-
-
 def main():
     common.connect()
-    api = core_v1_api.CoreV1Api()
+    api = client.CoreV1Api()
 
-    [name, namespace, container] = common.get_core_node_parameter_list()
+    name, namespace, container = common.get_core_node_parameter_list()
+
+    if not name:
+        log.error("Pod name is not defined. Set RD_CONFIG_NAME or RD_NODE_DEFAULT_NAME.")
+        sys.exit(1)
+
     common.verify_pod_exists(name, namespace)
 
-    delete_on_fail = False
-    if os.environ.get('RD_CONFIG_DELETEONFAIL') == 'true':
-        delete_on_fail = True
-
-    resp = None
-    try:
-        resp = api.read_namespaced_pod(name=name,
-                                       namespace=namespace)
-    except ApiException as e:
-        if e.status != 404:
-            log.exception("Unknown error:")
-            exit(1)
-
-    if not resp:
-        log.error("Pod %s does not exits.", name)
-        exit(1)
+    delete_on_fail = os.environ.get('RD_CONFIG_DELETEONFAIL') == 'true'
 
     if not container:
-        core_v1 = client.CoreV1Api()
-        response = core_v1.read_namespaced_pod_status(
+        response = api.read_namespaced_pod_status(
             name=name,
             namespace=namespace,
             pretty="True"
@@ -56,15 +41,17 @@ def main():
             container = response.spec.containers[0].name
         else:
             log.error("Container not found")
-            exit(1)
+            sys.exit(1)
 
     common.log_pod_parameters(log, {'name': name, 'namespace': namespace, 'container_name': container})
 
     script = os.environ.get('RD_CONFIG_SCRIPT')
 
-    # Python 3 expects bytes string to transfer the data.
-    if PY == 3:
-        script = script.encode('utf-8')
+    if not script:
+        log.error("No script provided. Set RD_CONFIG_SCRIPT.")
+        sys.exit(1)
+
+    script = script.encode('utf-8')
 
     log.debug("--------------------------")
     log.debug("Pod Name:  %s", name)
@@ -72,24 +59,18 @@ def main():
     log.debug("Container: %s", container)
     log.debug("--------------------------")
 
-    invocation = "/bin/bash"
-    if 'RD_CONFIG_INVOCATION' in os.environ:
-        invocation = os.environ.get('RD_CONFIG_INVOCATION')
-
-    destination_path = "/tmp"
-
-    if 'RD_NODE_FILE_COPY_DESTINATION_DIR' in os.environ:
-        destination_path = os.environ.get('RD_NODE_FILE_COPY_DESTINATION_DIR')
+    invocation = os.environ.get('RD_CONFIG_INVOCATION', '/bin/bash')
+    destination_path = os.environ.get('RD_NODE_FILE_COPY_DESTINATION_DIR', '/tmp')
 
     temp = tempfile.NamedTemporaryFile()
     destination_file_name = os.path.basename(temp.name)
-    full_path = destination_path + "/" + destination_file_name
+    full_path = os.path.join(destination_path, destination_file_name)
 
     try:
         temp.write(script)
         temp.seek(0)
 
-        log.debug("coping script from %s to %s", temp.name, full_path)
+        log.debug("copying script from %s to %s", temp.name, full_path)
 
         common.copy_file(name=name,
                          namespace=namespace,
@@ -140,8 +121,13 @@ def main():
         if delete_on_fail:
             log.info("removing POD on fail")
             data = {"name": name, "namespace": namespace}
-            common.delete_pod(data)
-            log.info("POD deleted")
+            # Cleanup runs because the script already failed. Report a cleanup
+            # failure without letting it mask the failure that caused it.
+            try:
+                common.delete_pod(data)
+                log.info("POD deleted")
+            except ApiException:
+                log.exception("Failed to remove POD %s after script failure:", name)
         sys.exit(1)
 
     rm_command = ["rm", full_path]
