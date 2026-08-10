@@ -22,7 +22,15 @@ ext.archivesBaseName = "kubernetes"
 ext.pluginBaseFolder = "."
 
 scmVersion {
-    ignoreUncommittedChanges = false
+    // Builds of the integration branch are driven by tags like
+    // "2.0.16+integration-N", created by the separate build repository.
+    // sanitizeVersion=false preserves the "+integration-N" suffix -- legal semver
+    // build metadata -- so the produced artifact name
+    // (build/libs/kubernetes-<version>.zip) matches what that pipeline expects.
+    // ignoreUncommittedChanges lets local and CI builds proceed from a dirty
+    // checkout.
+    ignoreUncommittedChanges = true
+    sanitizeVersion = false
     tag {
         prefix = ''           // NO "v" prefix - see PLUGIN_TAGGING_ARCHITECTURE.md
         versionSeparator = ''
