@@ -175,17 +175,18 @@ def nodeCollectData(pod, container, config, index=1):
             mapping_array = dict(s.split('=', 1) for s in mapping.split())
 
             for key, value in mapping_array.items():
-                if ".selector" in key:
-                    attribute = key.replace(".selector", "")
-                    custom_attribute = data.get(value)
+                # The ".selector" suffix is optional. Requiring it silently
+                # ignored every entry written as plain "alias=source", with no
+                # indication that the mapping had been dropped.
+                attribute = key.replace(".selector", "")
+                custom_attribute = data.get(value)
 
-                    # `is not None` rather than a truth test: a Kubernetes label
-                    # may legitimately have an empty value, and dropping the
-                    # mapping in that case loses an attribute whose source does
-                    # exist. A missing source still resolves to None and is
-                    # skipped.
-                    if custom_attribute is not None:
-                        custom_attributes[attribute] = custom_attribute
+                # `is not None` rather than a truth test: a Kubernetes label may
+                # legitimately have an empty value, and dropping the mapping in
+                # that case loses an attribute whose source does exist. A
+                # missing source still resolves to None and is skipped.
+                if custom_attribute is not None:
+                    custom_attributes[attribute] = custom_attribute
 
         log.debug('Custom Attributes: %s', custom_attributes)
 

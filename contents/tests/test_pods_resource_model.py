@@ -224,6 +224,20 @@ class TestNodeCollectData(unittest.TestCase):
                                'service.selector=labels:app.kubernetes.io/service', False)
         self.assertEqual('checkout', data['service'])
 
+    def test_custom_mapping_without_selector_suffix(self):
+        # "alias=source" is the form operators actually write. Requiring
+        # ".selector" silently ignored the whole mapping.
+        container = make_container(image='nginx:1')
+        pod = make_pod(namespace='prod',
+                       labels={'helm.sh/chart': 'billing-1.2.3'},
+                       container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes',
+                               'namespace=default:namespace,chart=labels:helm.sh/chart',
+                               False)
+        self.assertEqual('prod', data['namespace'])
+        self.assertEqual('billing-1.2.3', data['chart'])
+
     def test_custom_mapping_keeps_an_empty_label_value(self):
         # Kubernetes label values may be empty. A truth test on the resolved
         # value dropped the mapping even though its source exists.
