@@ -224,6 +224,18 @@ class TestNodeCollectData(unittest.TestCase):
                                'service.selector=labels:app.kubernetes.io/service', False)
         self.assertEqual('checkout', data['service'])
 
+    def test_custom_mapping_keeps_an_empty_label_value(self):
+        # Kubernetes label values may be empty. A truth test on the resolved
+        # value dropped the mapping even though its source exists.
+        container = make_container()
+        pod = make_pod(labels={'app.kubernetes.io/component': ''},
+                       container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes',
+                               'component.selector=labels:app.kubernetes.io/component', False)
+        self.assertIn('component', data)
+        self.assertEqual('', data['component'])
+
     def test_custom_mapping_unknown_source_is_skipped(self):
         container = make_container()
         pod = make_pod(container_statuses=None)

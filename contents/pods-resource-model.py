@@ -179,7 +179,12 @@ def nodeCollectData(pod, container, config, index=1):
                     attribute = key.replace(".selector", "")
                     custom_attribute = data.get(value)
 
-                    if custom_attribute:
+                    # `is not None` rather than a truth test: a Kubernetes label
+                    # may legitimately have an empty value, and dropping the
+                    # mapping in that case loses an attribute whose source does
+                    # exist. A missing source still resolves to None and is
+                    # skipped.
+                    if custom_attribute is not None:
                         custom_attributes[attribute] = custom_attribute
 
         log.debug('Custom Attributes: %s', custom_attributes)

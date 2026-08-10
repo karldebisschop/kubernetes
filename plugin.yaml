@@ -40,7 +40,7 @@ providers:
       - type: String
         name: nodename_format
         title: 'Node Name Format'
-        description: 'Template for the node name. Reference any node attribute with ${...}: default:*, labels:*, index, or an alias defined in Custom Mapping. An attribute that is unset renders as an empty string. index counts the emitted pods within a workload in a single namespace, so include ${default:namespace} when scanning all namespaces or two namespaces running the same workload will produce the same node name. Ignored if a nodename is set explicitly through Custom Mapping or Default attributes. The full pod name remains available as default:name for traceability.'
+        description: 'Template for the node name. Reference any node attribute with ${...}: default:*, labels:*, index, or an alias defined in Custom Mapping. An attribute that is unset renders as an empty string. index counts the emitted pods within one namespace/workload/container group, so the template has to distinguish those dimensions itself: include ${default:namespace} when scanning more than one namespace, and ${default:container_name} for pods with more than one container. Omitting either lets two different pods render the same node name, and Rundeck keeps only one of them. Ignored if a nodename is set explicitly through Custom Mapping or Default attributes. The full pod name remains available as default:name for traceability.'
         default: '${default:name}-${default:container_name}'
         renderingOptions:
           groupName: Config
@@ -91,7 +91,7 @@ providers:
       - type: Boolean
         name: one_per_workload
         title: One Node Per Workload?
-        description: 'Emit a single node per workload (Deployment/StatefulSet/etc.) instead of one per pod, so a job runs once per deployment without every job needing an index filter. The emitted node keeps the first matching pod name in default:name; default:workload carries the stable workload name.'
+        description: 'Emit a single node per workload (Deployment/StatefulSet/etc.) instead of one per pod, so a job runs once per deployment without every job needing an index filter. One node is emitted per namespace/workload/container, so a multi-container pod still yields one node per container. The emitted node keeps the first matching pod name in default:name; default:workload carries the stable workload name.'
         default: "false"
         renderingOptions:
           groupName: Config
