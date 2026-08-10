@@ -70,22 +70,15 @@ def connect():
         config.load_incluster_config()
         return
 
-    if os.environ.get('RD_CONFIG_CONFIG_FILE'):
-        config_file = os.environ.get('RD_CONFIG_CONFIG_FILE')
-    elif os.environ.get('RD_NODE_KUBERNETES_CONFIG_FILE'):
-        config_file = os.environ.get('RD_NODE_KUBERNETES_CONFIG_FILE')
+    config_file = os.environ.get('RD_CONFIG_CONFIG_FILE') or os.environ.get('RD_NODE_KUBERNETES_CONFIG_FILE')
 
     verify_ssl = os.environ.get('RD_CONFIG_VERIFY_SSL')
     ssl_ca_cert = os.environ.get('RD_CONFIG_SSL_CA_CERT')
     url = os.environ.get('RD_CONFIG_URL')
-    
+
     token = os.environ.get('RD_CONFIG_TOKEN')
     if not token:
         token = os.environ.get('RD_CONFIG_TOKEN_STORAGE_PATH')
-
-    log.debug("config file")
-    log.debug(config_file)
-    log.debug("-------------------")
 
     if config_file:
         log.debug("getting settings from file %s", config_file)
@@ -209,16 +202,9 @@ def get_code_node_parameter_dictionary():
 
     :returns: A dictionary of name, namespace, and container
     """
-    container = None
-
-    if 'RD_CONFIG_CONTAINER_NAME' in os.environ:
-        container = os.environ.get('RD_CONFIG_CONTAINER_NAME')
-
-    if container is None and 'RD_CONFIG_CONTAINER' in os.environ:
-        container = os.environ.get('RD_CONFIG_CONTAINER')
-
-    if container is None and 'RD_NODE_DEFAULT_CONTAINER_NAME' in os.environ:
-        container = os.environ.get('RD_NODE_DEFAULT_CONTAINER_NAME')
+    container = (os.environ.get('RD_CONFIG_CONTAINER_NAME')
+                 or os.environ.get('RD_CONFIG_CONTAINER')
+                 or os.environ.get('RD_NODE_DEFAULT_CONTAINER_NAME'))
 
     return {
         'name': os.environ.get('RD_CONFIG_NAME', os.environ.get('RD_NODE_DEFAULT_NAME')),
@@ -245,10 +231,10 @@ def verify_pod_exists(name, namespace):
     except ApiException as e:
         if e.status != 404:
             log.exception("Unknown error:")
-            exit(1)
+            sys.exit(1)
     if not resp:
         log.error("Pod %s does not exist", name)
-        exit(1)
+        sys.exit(1)
 
 
 def parsePorts(data):
@@ -381,7 +367,7 @@ class ObjectEncoder(json.JSONEncoder):
 def parseJson(obj):
     try:
         return json.dumps(obj, cls=ObjectEncoder)
-    except:
+    except Exception:
         return obj
 
 
@@ -610,9 +596,9 @@ def run_interactive_command(name, namespace, container, command):
     err = yaml.safe_load(err)
     if err['status'] != "Success":
         log.error('Failed to run command')
-        log.error('Reason: ' + err['reason'])
-        log.error('Message: ' + err['message'])
-        log.error('Details: ' + ';'.join(map(lambda x: json.dumps(x), err['details']['causes'])))
+        log.error('Reason: %s', err['reason'])
+        log.error('Message: %s', err['message'])
+        log.error('Details: %s', ';'.join(json.dumps(x) for x in err['details']['causes']))
         error = True
 
     return (resp, error)
@@ -631,7 +617,12 @@ def delete_pod(data):
                                          propagation_policy='Foreground')
         return resp
 
-    except Exception as e:
+    except ApiException as e:
+        # A pod that is already gone is not a failure to delete, so report that
+        # by returning None. Anything else is raised so the caller can tell the
+        # two apart -- returning None for both left callers unable to notice a
+        # failed delete.
         if e.status != 404:
-            log.exception("Unknown error:")
-            return None
+            raise
+        log.warning("Pod %s not found in namespace %s", data["name"], data["namespace"])
+        return None
