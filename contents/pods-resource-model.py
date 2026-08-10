@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import datetime
 import logging
+import re
 import sys
 import os
 import common
@@ -18,6 +19,53 @@ logging.basicConfig(stream=sys.stderr,
 log = logging.getLogger('kubernetes-model-source')
 
 
+_TEMPLATE_TOKEN = re.compile(r'\$\{([^}]+)\}')
+
+# Default nodename template; reproduces the historical "<pod name>-<container name>".
+DEFAULT_NODENAME_FORMAT = '${default:name}-${default:container_name}'
+
+
+def _render_attribute_template(template, data):
+    # Substitute ${attribute} tokens with values from the node data dict, where
+    # attribute is any key present in data (e.g. default:name, labels:site,
+    # default:container_name). An attribute that is unknown, or known but unset,
+    # renders as an empty string -- an unscheduled pod has no podIP, and
+    # rendering that as "None" would put the word in the node name and give
+    # every such pod the same one.
+    def value(match):
+        attribute = data.get(match.group(1))
+        return '' if attribute is None else str(attribute)
+
+    return _TEMPLATE_TOKEN.sub(value, template)
+
+
+def render_nodename(data, config):
+    # An explicit nodename from Custom Mapping ("nodename.selector=default:name",
+    # the first example in the README) or from Default attributes wins. The
+    # template is the default naming strategy, not an override of the operator's
+    # -- overriding it would silently rename every node of an existing job.
+    if data.get('nodename'):
+        return data['nodename']
+
+    nodename_format = config.get('nodename_format') or DEFAULT_NODENAME_FORMAT
+    return _render_attribute_template(nodename_format, data)
+
+
+def workload_name(metadata, labels):
+    # Best-effort human-friendly workload name: the pod's controlling object, with
+    # the Deployment pod-template-hash stripped (e.g. "my-app-7f4b8bbfc6" -> "my-app").
+    # StatefulSets, DaemonSets and Jobs carry no such hash, so their owner name is used.
+    owner_refs = metadata.get('ownerReferences') or []
+    # Prefer controlling owner; fall back to first reference, then pod name.
+    owner = next((o for o in owner_refs if o.get('controller')),
+                 owner_refs[0] if owner_refs else None)
+    name = owner['name'] if owner else metadata['name']
+    pod_template_hash = labels.get('pod-template-hash')
+    if pod_template_hash and name.endswith('-' + pod_template_hash):
+        name = name[:-(len(pod_template_hash) + 1)]
+    return name
+
+
 def format_started_at(started):
     # With _preload_content=False the API's startedAt arrives as an RFC 3339 string
     # (e.g. "2024-06-15T10:30:00Z") rather than a datetime. Reformat it to the
@@ -32,7 +80,7 @@ def format_started_at(started):
         return None
 
 
-def nodeCollectData(pod, container, config):
+def nodeCollectData(pod, container, config, index=1):
     # config carries the per-run options parsed once in main() (tags, mappings,
     # defaults, emoticon flag, config file) so they are not re-parsed for every node.
     tags = config['tags']
@@ -81,6 +129,7 @@ def nodeCollectData(pod, container, config):
                 statusMessage = info.get('message')
 
     labels = []
+    workload = workload_name(metadata, pod_labels or {})
 
     if pod_labels:
         for keys, values in pod_labels.items():
@@ -94,6 +143,7 @@ def nodeCollectData(pod, container, config):
         'default:host_id': pod_status.get('hostIP'),
         'default:started_at': startedAt,
         'default:name': metadata['name'],
+        'default:workload': workload,
         'default:labels': ','.join(labels),
         'default:namespace': metadata['namespace'],
         'default:image': container.get('image'),
@@ -103,9 +153,21 @@ def nodeCollectData(pod, container, config):
         'default:container_name': container_name
     }
 
-    custom_attributes = {}
+    # rundeck attributes
+    data = default_settings
+    data['hostname'] = default_settings['default:pod_id']
+    data['terminated'] = terminated
 
-    # custom mapping attributes
+    # Add labels as its own map of node attributes.
+    if pod_labels is not None:
+        for key, value in pod_labels.items():
+            data['labels:' + key] = value
+
+    # Initialize custom attributes with ordinal position of this pod within its parent.
+    custom_attributes = {'index': index}
+
+    # Custom mapping attributes. Resolved after labels are merged so a mapping can
+    # name any node attribute as its source -- default:*, labels:*, hostname.
     if config['mappings']:
         log.debug('Mapping: %s', config['mappings'])
 
@@ -115,26 +177,17 @@ def nodeCollectData(pod, container, config):
             for key, value in mapping_array.items():
                 if ".selector" in key:
                     attribute = key.replace(".selector", "")
-                    custom_attribute = None
-                    # take the values from default
-                    if "default:" in value:
-                        custom_attribute = default_settings[value]
+                    custom_attribute = data.get(value)
 
-                    if custom_attribute:
+                    # `is not None` rather than a truth test: a Kubernetes label
+                    # may legitimately have an empty value, and dropping the
+                    # mapping in that case loses an attribute whose source does
+                    # exist. A missing source still resolves to None and is
+                    # skipped.
+                    if custom_attribute is not None:
                         custom_attributes[attribute] = custom_attribute
 
         log.debug('Custom Attributes: %s', custom_attributes)
-
-    # rundeck attributes
-    data = default_settings
-    data['nodename'] = default_settings['default:name']+"-"+container_name
-    data['hostname'] = default_settings['default:pod_id']
-    data['terminated'] = terminated
-
-    # Add labels as its own map of node attributes.
-    if pod_labels is not None:
-        for key, value in pod_labels.items():
-            data['labels:' + key] = value
 
     emoticon = ""
     if default_settings['default:status'] == "running":
@@ -174,6 +227,10 @@ def nodeCollectData(pod, container, config):
 
     data.update(config['defaults'])
 
+    # nodename is left to the caller: main() renders it only once the pod is
+    # known to be kept and has its final index, so the template can reference
+    # ${index}. Any explicit nodename from Custom Mapping or Default attributes
+    # is already in data by this point and render_nodename honours it.
     return data
 
 
@@ -222,6 +279,8 @@ def main():
     if os.environ.get('RD_CONFIG_RUNNING') == 'true':
         running = True
 
+    one_per_workload = os.environ.get('RD_CONFIG_ONE_PER_WORKLOAD') == 'true'
+
     boEmoticon = False
     if os.environ.get('RD_CONFIG_EMOTICON') == 'true':
         boEmoticon = True
@@ -261,9 +320,16 @@ def main():
         'defaults': dict(token.split('=') for token in shlex.split(defaults or '')),
         'emoticon': boEmoticon,
         'config_file': os.environ.get('RD_CONFIG_CONFIG_FILE'),
+        'nodename_format': os.environ.get('RD_CONFIG_NODENAME_FORMAT'),
     }
 
     node_set = []
+
+    # Count child pods of a (possibly autoscaling) ReplicaSet or other parent.
+    # 'emitted' tracks which workloads have already contributed a node when
+    # one_per_workload is enabled.
+    parents = {}
+    emitted = set()
 
     try:
         ret = collect_pods_from_api(namespace_filter, label_selector,
@@ -275,22 +341,56 @@ def main():
         sys.exit(1)
 
     for i in ret:
+        metadata = i['metadata']
+        pod_name = metadata['name']
+        namespace = metadata['namespace']
+        labels = metadata.get('labels') or {}
+        workload = workload_name(metadata, labels)
         for container in i['spec']['containers']:
+            container_name = container['name']
             log.debug("%s\t%s\t%s\t%s",
                       i['status'].get('podIP'),
-                      i['metadata']['namespace'],
-                      i['metadata']['name'],
-                      container['name'])
+                      namespace,
+                      pod_name,
+                      container_name)
+
+            group = f"{namespace}/{workload}/{container_name}"
 
             node_data = nodeCollectData(i, container, config)
 
-            if running is False:
-                if node_data["terminated"] is False:
-                    node_set.append(node_data)
+            if running:
+                keep = node_data["status"].lower() == "running"
+            else:
+                keep = node_data["terminated"] is False
 
-            if running is True:
-                if node_data["status"].lower() == "running":
-                    node_set.append(node_data)
+            # With one_per_workload, emit only the first kept pod for each workload and
+            # container, so the node list shows a single entry per deployment.
+            if keep and one_per_workload:
+                if group in emitted:
+                    keep = False
+                else:
+                    emitted.add(group)
+
+            if not keep:
+                continue
+
+            # Number pods within their workload -- the owning Deployment/StatefulSet/etc.
+            # with the pod-template-hash stripped -- keyed per namespace and container so
+            # each container name gets its own sequence, and keeping templated node names
+            # unique while two ReplicaSets briefly coexist on a rollout.
+            #
+            # Numbering runs after the filter so a pod that is not emitted does not
+            # consume an index. Otherwise a workload whose first pod is Terminated emits
+            # nodes numbered 2 and 3, and "index == 1" -- the documented way to target a
+            # single replica -- matches nothing.
+            parents[group] = parents.get(group, 0) + 1
+            node_data['index'] = parents[group]
+
+            # Rendered here rather than in nodeCollectData so the template can reference
+            # ${index} after it is final.
+            node_data['nodename'] = render_nodename(node_data, config)
+
+            node_set.append(node_data)
 
     print(json.dumps(node_set, sort_keys=True))
 
