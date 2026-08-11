@@ -33,7 +33,7 @@ providers:
       - type: String
         name: tags
         title: Tags
-        description: 'You can add static and custom tags, eg: tag.selector=default:image'
+        description: 'You can add static and custom tags, eg: tag.selector=default:image. An unset attribute is omitted. Commas split a value into several tags: good for default:labels, wrong for free text like default:status_message.'
         default: 'tag.selector=default:status'
         renderingOptions:
           groupName: Config

@@ -215,8 +215,21 @@ def nodeCollectData(pod, container, config, index=1):
 
     for tag in tags:
         if "tag.selector=" in tag:
-            custom_tag = data[tag.replace("tag.selector=", "")]
-            final_tags.append(custom_tag)
+            attribute = tag.replace("tag.selector=", "")
+            custom_tag = data.get(attribute)
+
+            # A selector naming an attribute this pod does not have -- a label
+            # only some pods carry, or an attribute that is legitimately unset,
+            # such as default:status_message on a healthy pod -- omits the tag
+            # for this node. Indexing instead raised KeyError out of main(), so
+            # a single unlabelled pod emptied the entire node source.
+            if custom_tag is None:
+                log.debug("No value for tag selector %r; tag omitted", attribute)
+                continue
+
+            # str() because not every node attribute is a string: terminated is
+            # a bool, and joining it raised TypeError.
+            final_tags.append(str(custom_tag))
         else:
             final_tags.append(tag)
 
