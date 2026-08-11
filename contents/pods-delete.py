@@ -22,13 +22,22 @@ def main():
 
     data = common.get_code_node_parameter_dictionary()
 
+    if not data["name"]:
+        log.error("Pod name is not defined. Set RD_CONFIG_NAME or RD_NODE_DEFAULT_NAME.")
+        sys.exit(1)
+
     common.connect()
 
     try:
-        common.delete_pod(data)
-        print("Pod deleted successfully")
+        resp = common.delete_pod(data)
+        if resp:
+            print("Pod deleted successfully")
+        else:
+            # Already gone. Deleting is idempotent, so a cleanup job that runs
+            # twice should not fail the second time.
+            print("Pod %s not found; nothing to delete" % data["name"])
     except ApiException:
-        log.exception("Exception deleting deployment:")
+        log.exception("Exception deleting pod %s:", data["name"])
         sys.exit(1)
 
 
