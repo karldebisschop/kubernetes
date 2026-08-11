@@ -244,6 +244,35 @@ class TestNodeCollectData(unittest.TestCase):
                                'nope.selector=labels:does-not-exist', False)
         self.assertNotIn('nope', data)
 
+    def test_tag_selector_missing_attribute_omits_the_tag(self):
+        # A label only some pods carry must not take the whole node source down:
+        # indexing raised KeyError out of main() and no nodes were emitted at all.
+        container = make_container()
+        pod = make_pod(labels={'other': 'x'}, container_statuses=None)
+
+        data = nodeCollectData(pod, container, '',
+                               'kubernetes,tag.selector=labels:absent', None, False)
+        self.assertEqual('pods,kubernetes', data['tags'])
+
+    def test_tag_selector_unset_attribute_omits_the_tag(self):
+        # default:status_message is None on a healthy pod, so this selector
+        # failed on an entirely normal cluster.
+        container = make_container()
+        pod = make_pod(container_statuses=None)
+
+        data = nodeCollectData(pod, container, '',
+                               'kubernetes,tag.selector=default:status_message', None, False)
+        self.assertEqual('pods,kubernetes', data['tags'])
+
+    def test_tag_selector_non_string_attribute(self):
+        # terminated is a bool; joining it raised TypeError.
+        container = make_container()
+        pod = make_pod(container_statuses=None)
+
+        data = nodeCollectData(pod, container, '',
+                               'kubernetes,tag.selector=terminated', None, False)
+        self.assertEqual('pods,kubernetes,False', data['tags'])
+
     def test_status_message_in_description(self):
         container = make_container()
         condition = {
