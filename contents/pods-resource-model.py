@@ -18,6 +18,12 @@ logging.basicConfig(stream=sys.stderr,
                     )
 log = logging.getLogger('kubernetes-model-source')
 
+# Per-container status lines are one line per container on every refresh, so they
+# default to DEBUG. Set them to INFO to follow container matching without turning
+# on full debug output.
+container_log_level = {'INFO': logging.INFO}.get(
+    os.environ.get('RD_CONFIG_CONTAINER_LOG_LEVEL', '').upper(), logging.DEBUG)
+
 
 _TEMPLATE_TOKEN = re.compile(r'\$\{([^}]+)\}')
 
@@ -101,11 +107,11 @@ def nodeCollectData(pod, container, config, index=1):
     container_statuses = pod_status.get('containerStatuses')
     if container_statuses:
 
-        log.info("------")
-        log.info("container-name:" + container_name)
+        log.log(container_log_level, '------')
+        log.log(container_log_level, 'container-name:%s', container_name)
 
         for statuses in container_statuses:
-            log.info("pod-container-name:" + statuses['name'])
+            log.log(container_log_level, 'pod-container-name:%s', statuses['name'])
 
             if container_name == statuses['name']:
                 state = statuses.get('state') or {}

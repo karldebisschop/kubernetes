@@ -17,3 +17,4 @@
 workload-indexing-and-node-naming
 step-script-fixes
 build-config
+quiet-container-status-logging
