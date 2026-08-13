@@ -3,6 +3,7 @@ Unit tests for pods-resource-model.py functions.
 """
 
 import importlib
+import logging
 import os
 import shlex
 import sys
@@ -17,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 pods_resource_model = importlib.import_module('pods-resource-model')
 collect_pods_from_api = pods_resource_model.collect_pods_from_api
 main = pods_resource_model.main
+LOGGER_NAME = 'kubernetes-model-source'
 
 # nodeCollectData now takes a config dict (parsed once in main) instead of flat config
 # strings. Adapt the flat-argument call shape these tests use to the new signature.
@@ -211,6 +213,23 @@ class TestNodeCollectData(unittest.TestCase):
 
         data = nodeCollectData(pod, container, '', 'kubernetes', None, False)
         self.assertEqual('/etc/kube/config', data['kubernetes:config_file'])
+
+    def test_container_status_lines_quiet_at_default_level(self):
+        container = make_container()
+        pod = make_pod(container_statuses=[make_container_status()])
+
+        with self.assertNoLogs(LOGGER_NAME, level='INFO'):
+            nodeCollectData(pod, container, '', 'kubernetes', None, False)
+
+    def test_container_status_lines_shown_at_info_level(self):
+        container = make_container()
+        pod = make_pod(container_statuses=[make_container_status()])
+
+        with patch.object(pods_resource_model, 'container_log_level', logging.INFO):
+            with self.assertLogs(LOGGER_NAME, level='INFO') as captured:
+                nodeCollectData(pod, container, '', 'kubernetes', None, False)
+
+        self.assertIn('INFO:%s:pod-container-name:app' % LOGGER_NAME, captured.output)
 
 
 class TestCollectPodsFromApi(unittest.TestCase):

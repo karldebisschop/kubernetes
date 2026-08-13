@@ -141,6 +141,15 @@ providers:
         required: false
         renderingOptions:
           groupName: Authentication
+      - name: container_log_level
+        type: Select
+        title: "Container Status Log Level"
+        description: "Level for the per-container status lines (container-name, pod-container-name). DEBUG (the default) shows them only when Debug is on; INFO shows them without full debug output."
+        required: false
+        values: "DEBUG,INFO"
+        default: 'DEBUG'
+        renderingOptions:
+          groupName: Config
   - name: Kubernetes-node-executor
     service: NodeExecutor
     title: Kubernetes / Pods / Node Executor
