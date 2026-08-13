@@ -53,11 +53,11 @@ def nodeCollectData(pod, container, config):
     container_statuses = pod_status.get('containerStatuses')
     if container_statuses:
 
-        log.info("------")
-        log.info("container-name:" + container_name)
+        log.debug('------')
+        log.debug('container-name:%s', container_name)
 
         for statuses in container_statuses:
-            log.info("pod-container-name:" + statuses['name'])
+            log.debug('pod-container-name:%s', statuses['name'])
 
             if container_name == statuses['name']:
                 state = statuses.get('state') or {}
