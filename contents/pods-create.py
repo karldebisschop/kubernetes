@@ -20,8 +20,17 @@ if os.environ.get('RD_JOB_LOGLEVEL') == 'DEBUG':
 
 
 def create_pod(data):
-    labels_array = data["labels"].split(',')
-    labels = dict(s.split('=') for s in labels_array)
+    # split('=', 1) so a value containing '=' does not raise on unpacking, and
+    # an entry without '=' is reported rather than raising a bare ValueError.
+    labels = {}
+    for entry in (data["labels"] or '').split(','):
+        if not entry:
+            continue
+        if '=' not in entry:
+            log.error("Labels must be key=value pairs separated by commas, got: %s", entry)
+            sys.exit(1)
+        key, value = entry.split('=', 1)
+        labels[key] = value
 
     metadata = client.V1ObjectMeta(labels=labels,
                                    namespace=data["namespace"],
@@ -82,7 +91,7 @@ def main():
     if os.environ.get('RD_CONFIG_RESOURCES_REQUESTS'):
         rr = os.environ.get('RD_CONFIG_RESOURCES_REQUESTS')
         data["resources_requests"] = rr
-    
+
     if os.environ.get('RD_CONFIG_RESOURCES_LIMITS'):
         rl = os.environ.get('RD_CONFIG_RESOURCES_LIMITS')
         data["resources_limits"] = rl
@@ -94,21 +103,23 @@ def main():
         data["image_pull_secrets"] = os.environ.get('RD_CONFIG_IMAGEPULLSECRETS')
 
     pod = create_pod(data)
-    resp = None
+
     try:
         resp = api.create_namespaced_pod(namespace=data['namespace'],
                                          body=pod,
                                          pretty="True")
-
-        print("Pod Created successfully")
-
     except ApiException:
-        log.exception("Exception creating pod:")
-        exit(1)
+        log.exception("Exception creating pod %s:", data['name'])
+        sys.exit(1)
 
+    # Report the outcome only once it is known. Announcing success before
+    # checking the response could print both that the pod was created and that
+    # it does not exist.
     if not resp:
-        print("Pod %s does not exist" % data['name'])
-        exit(1)
+        log.error("Pod %s was not created", data['name'])
+        sys.exit(1)
+
+    print("Pod Created successfully")
 
 
 if __name__ == '__main__':
