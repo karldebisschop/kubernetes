@@ -30,8 +30,13 @@ def nodeCollectData(pod, container, defaults, taglist, mappingList, boEmoticon):
         'defaults': dict(token.split('=') for token in shlex.split(defaults or '')),
         'emoticon': boEmoticon,
         'config_file': os.environ.get('RD_CONFIG_CONFIG_FILE'),
+        'nodename_format': os.environ.get('RD_CONFIG_NODENAME_FORMAT'),
     }
-    return _nodeCollectData(pod, container, config)
+    data = _nodeCollectData(pod, container, config)
+    # main() renders the nodename once the index is final; mirror that here so
+    # direct-call tests exercise the same naming path.
+    data['nodename'] = pods_resource_model.render_nodename(data, config)
+    return data
 
 
 # The resource model parses raw API JSON into plain dicts (camelCase keys), so
@@ -42,17 +47,32 @@ def make_container(name='app', image='nginx:latest'):
 
 def make_pod(name='my-pod', namespace='default', pod_ip='10.0.0.1',
              host_ip='192.168.1.1', phase='Running', labels=None,
-             container_statuses=None, conditions=None):
+             container_statuses=None, conditions=None, owner_references=None):
     status = {'phase': phase, 'podIP': pod_ip, 'hostIP': host_ip}
     if container_statuses is not None:
         status['containerStatuses'] = container_statuses
     if conditions is not None:
         status['conditions'] = conditions
+    metadata = {'name': name, 'namespace': namespace, 'labels': labels}
+    if owner_references is not None:
+        metadata['ownerReferences'] = owner_references
     return {
-        'metadata': {'name': name, 'namespace': namespace, 'labels': labels},
+        'metadata': metadata,
         'spec': {'containers': []},
         'status': status,
     }
+
+
+def make_deployment_pod(name, suffix, hash_='7f4b8bbfc6', container_statuses=None,
+                        namespace='default'):
+    # A pod owned by a Deployment's ReplicaSet, named <name>-<hash>-<suffix>.
+    return make_pod(
+        name=f'{name}-{hash_}-{suffix}',
+        namespace=namespace,
+        labels={'pod-template-hash': hash_},
+        owner_references=[{'kind': 'ReplicaSet', 'name': f'{name}-{hash_}', 'controller': True}],
+        container_statuses=container_statuses,
+    )
 
 
 def make_container_status(name='app', running=True, started_at=None,
@@ -192,6 +212,67 @@ class TestNodeCollectData(unittest.TestCase):
                                'hostname.selector=default:pod_id', False)
         self.assertEqual('10.0.0.1', data['hostname'])
 
+    def test_custom_mapping_from_label(self):
+        # A label key cannot be written as a ${...} token when it contains
+        # characters the operator would rather not repeat; a mapping gives it a
+        # short alias usable anywhere a node attribute is.
+        container = make_container()
+        pod = make_pod(labels={'app.kubernetes.io/service': 'checkout'},
+                       container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes',
+                               'service.selector=labels:app.kubernetes.io/service', False)
+        self.assertEqual('checkout', data['service'])
+
+    def test_custom_mapping_keeps_an_empty_label_value(self):
+        # Kubernetes label values may be empty. A truth test on the resolved
+        # value dropped the mapping even though its source exists.
+        container = make_container()
+        pod = make_pod(labels={'app.kubernetes.io/component': ''},
+                       container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes',
+                               'component.selector=labels:app.kubernetes.io/component', False)
+        self.assertIn('component', data)
+        self.assertEqual('', data['component'])
+
+    def test_custom_mapping_unknown_source_is_skipped(self):
+        container = make_container()
+        pod = make_pod(container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes',
+                               'nope.selector=labels:does-not-exist', False)
+        self.assertNotIn('nope', data)
+
+    def test_tag_selector_missing_attribute_omits_the_tag(self):
+        # A label only some pods carry must not take the whole node source down:
+        # indexing raised KeyError out of main() and no nodes were emitted at all.
+        container = make_container()
+        pod = make_pod(labels={'other': 'x'}, container_statuses=None)
+
+        data = nodeCollectData(pod, container, '',
+                               'kubernetes,tag.selector=labels:absent', None, False)
+        self.assertEqual('pods,kubernetes', data['tags'])
+
+    def test_tag_selector_unset_attribute_omits_the_tag(self):
+        # default:status_message is None on a healthy pod, so this selector
+        # failed on an entirely normal cluster.
+        container = make_container()
+        pod = make_pod(container_statuses=None)
+
+        data = nodeCollectData(pod, container, '',
+                               'kubernetes,tag.selector=default:status_message', None, False)
+        self.assertEqual('pods,kubernetes', data['tags'])
+
+    def test_tag_selector_non_string_attribute(self):
+        # terminated is a bool; joining it raised TypeError.
+        container = make_container()
+        pod = make_pod(container_statuses=None)
+
+        data = nodeCollectData(pod, container, '',
+                               'kubernetes,tag.selector=terminated', None, False)
+        self.assertEqual('pods,kubernetes,False', data['tags'])
+
     def test_status_message_in_description(self):
         container = make_container()
         condition = {
@@ -211,6 +292,103 @@ class TestNodeCollectData(unittest.TestCase):
 
         data = nodeCollectData(pod, container, '', 'kubernetes', None, False)
         self.assertEqual('/etc/kube/config', data['kubernetes:config_file'])
+
+    def test_workload_strips_pod_template_hash(self):
+        container = make_container(name='web')
+        pod = make_deployment_pod('my-app', '2q2hd', container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes', None, False)
+        self.assertEqual('my-app', data['default:workload'])
+        # full pod name is still available for traceability
+        self.assertEqual('my-app-7f4b8bbfc6-2q2hd', data['default:name'])
+
+    def test_workload_falls_back_to_pod_name(self):
+        container = make_container(name='web')
+        pod = make_pod(name='lonely-pod', container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes', None, False)
+        self.assertEqual('lonely-pod', data['default:workload'])
+
+    def test_workload_prefers_controller_owner(self):
+        # A non-controller owner listed first must be ignored in favor of the controller.
+        container = make_container(name='web')
+        pod = make_pod(
+            name='my-app-7f4b8bbfc6-2q2hd',
+            labels={'pod-template-hash': '7f4b8bbfc6'},
+            owner_references=[
+                {'kind': 'Foo', 'name': 'some-other-owner'},
+                {'kind': 'ReplicaSet', 'name': 'my-app-7f4b8bbfc6', 'controller': True},
+            ],
+            container_statuses=None,
+        )
+
+        data = nodeCollectData(pod, container, '', 'kubernetes', None, False)
+        self.assertEqual('my-app', data['default:workload'])
+
+    def test_nodename_format_default(self):
+        container = make_container(name='web')
+        pod = make_pod(name='my-pod', container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes', None, False)
+        self.assertEqual('my-pod-web', data['nodename'])
+
+    def test_nodename_format_template_with_labels(self):
+        os.environ['RD_CONFIG_NODENAME_FORMAT'] = (
+            '${labels:site}-${labels:deployment_group}-${default:name}-${default:container_name}'
+        )
+        container = make_container(name='web')
+        pod = make_pod(name='my-pod',
+                       labels={'site': 'us-east', 'deployment_group': 'blue'},
+                       container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes', None, False)
+        self.assertEqual('us-east-blue-my-pod-web', data['nodename'])
+
+    def test_nodename_format_missing_attribute_is_blank(self):
+        os.environ['RD_CONFIG_NODENAME_FORMAT'] = '${labels:site}-${default:name}'
+        container = make_container(name='web')
+        pod = make_pod(name='my-pod', labels=None, container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes', None, False)
+        self.assertEqual('-my-pod', data['nodename'])
+
+    def test_nodename_workload_and_index(self):
+        os.environ['RD_CONFIG_NODENAME_FORMAT'] = '${default:workload}-${index}'
+        container = make_container(name='web')
+        pod = make_deployment_pod('my-app', '2q2hd', container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes', None, False)
+        self.assertEqual('my-app-1', data['nodename'])
+
+    def test_nodename_unset_attribute_renders_blank_not_none(self):
+        # An unscheduled pod has no podIP. Rendering that as "None" would put the
+        # word in the node name and give every pending pod the same one.
+        os.environ['RD_CONFIG_NODENAME_FORMAT'] = '${default:name}-${default:pod_id}'
+        container = make_container(name='web')
+        pod = make_pod(name='my-pod', pod_ip=None, container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes', None, False)
+        self.assertEqual('my-pod-', data['nodename'])
+
+    def test_explicit_nodename_mapping_wins_over_the_template(self):
+        # nodename.selector=default:name is the first example in the README, so
+        # the template must not silently rename the nodes of an existing job.
+        os.environ['RD_CONFIG_NODENAME_FORMAT'] = '${default:workload}-${index}'
+        container = make_container(name='web')
+        pod = make_deployment_pod('my-app', '2q2hd', container_statuses=None)
+
+        data = nodeCollectData(pod, container, '', 'kubernetes',
+                               'nodename.selector=default:name', False)
+        self.assertEqual('my-app-7f4b8bbfc6-2q2hd', data['nodename'])
+
+    def test_explicit_nodename_default_wins_over_the_template(self):
+        os.environ['RD_CONFIG_NODENAME_FORMAT'] = '${default:workload}-${index}'
+        container = make_container(name='web')
+        pod = make_deployment_pod('my-app', '2q2hd', container_statuses=None)
+
+        data = nodeCollectData(pod, container, 'nodename=fixed-name', 'kubernetes',
+                               None, False)
+        self.assertEqual('fixed-name', data['nodename'])
 
 
 class TestCollectPodsFromApi(unittest.TestCase):
@@ -557,6 +735,115 @@ class TestMain(unittest.TestCase):
         self.assertIn('401', joined_logs)
         self.assertIn('Unauthorized', joined_logs)
         self.assertIn('Invalid bearer token', joined_logs)
+
+    @patch.object(pods_resource_model, 'collect_pods_from_api')
+    @patch.object(pods_resource_model.common, 'connect')
+    def test_main_indexes_containers_within_parent(self, mock_connect, mock_collect):
+        os.environ['RD_CONFIG_TAGS'] = 'kubernetes'
+        os.environ['RD_CONFIG_ATTRIBUTES'] = ''
+
+        c1 = make_container(name='app')
+        c2 = make_container(name='sidecar')
+        statuses = [make_container_status(name='app', running=True),
+                    make_container_status(name='sidecar', running=True)]
+
+        # Pods are grouped by workload (owner minus pod-template-hash), so each
+        # container name gets its own sequence within a Deployment.
+        pods = [make_deployment_pod('rs', 'aaaaa', container_statuses=statuses),
+                make_deployment_pod('rs', 'bbbbb', container_statuses=statuses),
+                make_deployment_pod('other', 'ccccc', container_statuses=statuses)]
+
+        mock_collect.return_value = self._make_pod_list([(p, [c1, c2]) for p in pods])
+
+        with patch('builtins.print') as mock_print:
+            main()
+
+        import json
+        indexes = {n['nodename']: n['index'] for n in json.loads(mock_print.call_args[0][0])}
+        self.assertEqual(indexes['rs-7f4b8bbfc6-aaaaa-app'], 1)
+        self.assertEqual(indexes['rs-7f4b8bbfc6-aaaaa-sidecar'], 1)
+        self.assertEqual(indexes['rs-7f4b8bbfc6-bbbbb-app'], 2)
+        self.assertEqual(indexes['rs-7f4b8bbfc6-bbbbb-sidecar'], 2)
+        self.assertEqual(indexes['other-7f4b8bbfc6-ccccc-app'], 1)
+
+    @patch.object(pods_resource_model, 'collect_pods_from_api')
+    @patch.object(pods_resource_model.common, 'connect')
+    def test_main_replicas_indexed_by_workload(self, mock_connect, mock_collect):
+        # Three replicas of one Deployment get unique, hash-free numbered names.
+        # The template carries the namespace because the index is counted per
+        # namespace: without it, the same workload name in two namespaces would
+        # produce the same node name on an all-namespaces scan.
+        os.environ['RD_CONFIG_TAGS'] = 'kubernetes'
+        os.environ['RD_CONFIG_ATTRIBUTES'] = ''
+        os.environ['RD_CONFIG_NODENAME_FORMAT'] = (
+            '${default:namespace}-${default:workload}-${index}')
+
+        container = make_container(name='app')
+        cs = make_container_status(name='app', running=True)
+        mock_collect.return_value = self._make_pod_list([
+            (make_deployment_pod('my-app', suffix, container_statuses=[cs]), [container])
+            for suffix in ('2q2hd', 'h7m4k', 'z6ztb')
+        ])
+
+        with patch('builtins.print') as mock_print:
+            main()
+
+        import json
+        nodes = json.loads(mock_print.call_args[0][0])
+        self.assertEqual(['default-my-app-1', 'default-my-app-2', 'default-my-app-3'],
+                         [n['nodename'] for n in nodes])
+
+    @patch.object(pods_resource_model, 'collect_pods_from_api')
+    @patch.object(pods_resource_model.common, 'connect')
+    def test_main_numbers_only_the_pods_it_emits(self, mock_connect, mock_collect):
+        # A filtered-out pod must not consume an index, or a workload whose first
+        # pod is Terminated emits nodes numbered 2 and 3 and "index == 1" -- the
+        # documented way to target a single replica -- matches nothing.
+        os.environ['RD_CONFIG_TAGS'] = 'kubernetes'
+        os.environ['RD_CONFIG_ATTRIBUTES'] = ''
+
+        container = make_container(name='app')
+        gone = make_container_status(name='app', running=False, terminated=True)
+        live = make_container_status(name='app', running=True)
+        mock_collect.return_value = self._make_pod_list([
+            (make_deployment_pod('my-app', '2q2hd', container_statuses=[gone]), [container]),
+            (make_deployment_pod('my-app', 'h7m4k', container_statuses=[live]), [container]),
+            (make_deployment_pod('my-app', 'z6ztb', container_statuses=[live]), [container]),
+        ])
+
+        with patch('builtins.print') as mock_print:
+            main()
+
+        import json
+        nodes = json.loads(mock_print.call_args[0][0])
+        self.assertEqual([1, 2], sorted(n['index'] for n in nodes))
+
+    @patch.object(pods_resource_model, 'collect_pods_from_api')
+    @patch.object(pods_resource_model.common, 'connect')
+    def test_main_one_per_workload(self, mock_connect, mock_collect):
+        # With the toggle on, three replicas collapse to a single node, while the
+        # specific pod name stays available as default:name for kubectl traceability.
+        os.environ['RD_CONFIG_TAGS'] = 'kubernetes'
+        os.environ['RD_CONFIG_ATTRIBUTES'] = ''
+        os.environ['RD_CONFIG_ONE_PER_WORKLOAD'] = 'true'
+
+        container = make_container(name='app')
+        cs = make_container_status(name='app', running=True)
+        mock_collect.return_value = self._make_pod_list([
+            (make_deployment_pod('my-app', suffix, container_statuses=[cs]), [container])
+            for suffix in ('2q2hd', 'h7m4k', 'z6ztb')
+        ])
+
+        with patch('builtins.print') as mock_print:
+            main()
+
+        import json
+        nodes = json.loads(mock_print.call_args[0][0])
+        self.assertEqual(1, len(nodes))
+        self.assertEqual('my-app', nodes[0]['default:workload'])
+        self.assertEqual('my-app-7f4b8bbfc6-2q2hd', nodes[0]['default:name'])
+        self.assertEqual('default', nodes[0]['default:namespace'])
+        self.assertEqual('app', nodes[0]['default:container_name'])
 
 
 if __name__ == '__main__':
