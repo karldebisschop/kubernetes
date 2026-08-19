@@ -30,7 +30,16 @@ scmVersion {
     versionCreator 'simple'  // Use simple version creator (just tag name)
 }
 
-version = scmVersion.version  // Dynamic version from git tag
+// PLUGIN_VERSION lets a build state its version instead of deriving one from a
+// tag. The SciSure integration pipeline sets it, for two reasons: the version it
+// must produce ("3.0.3+integration-7") is synthesised from an anchor tag rather
+// than recorded in any tag of its own, and with an empty prefix axion reads every
+// tag in the repository as a version and fails the build on the first one it
+// cannot parse -- which the anchor tags are not meant to be.
+//
+// Groovy's elvis operator short-circuits, so an unset PLUGIN_VERSION leaves
+// upstream's tag-derived behaviour, and axion's tag scan, exactly as they were.
+version = System.getenv('PLUGIN_VERSION') ?: scmVersion.version
 ext.publishName = "Kubernetes ${project.version}"
 ext.githubSlug = 'rundeck-plugins/kubernetes'
 ext.developers = [
